@@ -1,0 +1,8 @@
+.claude
+.git
+# Consumed elsewhere (demo/backend) via a raw file: link to this checkout, alongside other
+# packages that expect a single shared react-i18next/i18next instance (e.g.
+# mirador-annotation-editor). This own dev-installed copy would otherwise shadow the shared one
+# and split React Context identity, breaking useTranslation() across package boundaries.
+node_modules/react-i18next
+node_modules/i18next

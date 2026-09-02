@@ -5,11 +5,11 @@
 We recommend installing Mirador using a JavaScript package manager like [npm](https://www.npmjs.com/) or [yarn](https://yarnpkg.com/).
 
 ```sh
-$ npm install mirador 
+$ npm install dbf-mirador 
 
 # or
 
-$ yarn add mirador
+$ yarn add dbf-mirador
 ```
 
 If you are interested in integrating Mirador with plugins into your project, we recommend using vite to integrate the es version of the packages. Examples are here:
@@ -19,7 +19,7 @@ If you are interested in integrating Mirador with plugins into your project, we 
 If you want to simply embed Mirador in an HTML page without further customization, include the Mirador UMD build:
 
 ```html
-<script src="https://unpkg.com/mirador@latest/dist/mirador.min.js"></script>
+<script src="https://unpkg.com/dbf-mirador@latest/dist/mirador.min.js"></script>
 ```
 
 Be aware that `latest` will at some point switch from version 3 to version 4. If you use Mirador via CDN in a production environment, consider pinning Mirador to version 3 to avoid sudden breaking changes:

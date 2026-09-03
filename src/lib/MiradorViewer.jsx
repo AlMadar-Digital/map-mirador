@@ -13,6 +13,7 @@ class MiradorViewer {
   constructor(config, viewerConfig = {}) {
     this.plugins = filterValidPlugins(viewerConfig.plugins || []);
     this.config = config;
+    this.dndManager = viewerConfig.dndManager;
     this.store = viewerConfig.store || createPluggableStore(this.config, this.plugins);
 
     if (config.id) this.renderInto(document.getElementById(config.id));
@@ -26,7 +27,7 @@ class MiradorViewer {
     this.container = container;
     this.root = createRoot(this.container);
 
-    this.root.render(this.render());
+    this.root.render(this.render({ dndManager: this.dndManager }));
   }
 
   /**

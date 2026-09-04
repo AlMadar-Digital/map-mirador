@@ -102,6 +102,23 @@ describe('getTheme', () => {
 
     expect(getTheme(state)).toEqual({ and_another_thing: true, whatever: 'dark' });
   });
+
+  it('derives an rtl direction from an rtl language when none is explicitly configured', () => {
+    const state = { config: { language: 'ar', selectedTheme: 'default', theme: {}, themes: {} } };
+    expect(getTheme(state)).toEqual({ direction: 'rtl' });
+  });
+
+  it('does not override an explicitly configured direction', () => {
+    const state = {
+      config: {
+        language: 'ar',
+        selectedTheme: 'default',
+        theme: { direction: 'ltr' },
+        themes: {},
+      },
+    };
+    expect(getTheme(state)).toEqual({ direction: 'ltr' });
+  });
 });
 
 describe('getThemeIds', () => {
@@ -134,6 +151,14 @@ describe('getThemeDirection', () => {
   });
   it('returns ltr as default', () => {
     const state = { config: { theme: {} } };
+    expect(getThemeDirection(state)).toBe('ltr');
+  });
+  it('derives rtl from an rtl language when no direction is configured', () => {
+    const state = { config: { language: 'ar', theme: {} } };
+    expect(getThemeDirection(state)).toBe('rtl');
+  });
+  it('does not override an explicitly configured direction with the language default', () => {
+    const state = { config: { language: 'ar', theme: { direction: 'ltr' } } };
     expect(getThemeDirection(state)).toBe('ltr');
   });
 });

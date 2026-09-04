@@ -2,6 +2,7 @@ import { createSelector } from 'reselect';
 import deepmerge from 'deepmerge';
 import { miradorSlice, EMPTY_ARRAY, EMPTY_OBJECT } from './utils';
 import { getWorkspace } from './getters';
+import { isRtlLanguage } from '../../lib/rtlLanguages';
 
 /**
  * Returns the config from the redux state.
@@ -62,13 +63,16 @@ export const getShowZoomControlsConfig = createSelector([getWorkspace, getConfig
 );
 
 /**
- * Returns the theme from the config.
+ * Returns the theme from the config. When no `direction` is explicitly configured (on the base
+ * theme or the selected named theme), one is derived from the active UI language - e.g. Arabic
+ * (`ar`) implies `rtl` - rather than always defaulting to `ltr` regardless of language.
  * @param {object} state
  * @returns {object} {palette: {...}, typography: {...}, overrides: {...}, ...}
  */
-export const getTheme = createSelector([getConfig], ({ theme, themes, selectedTheme }) =>
-  deepmerge(theme, themes[selectedTheme] || {}),
-);
+export const getTheme = createSelector([getConfig], ({ theme, themes, selectedTheme, language }) => {
+  const merged = deepmerge(theme, themes[selectedTheme] || {});
+  return merged.direction || !isRtlLanguage(language) ? merged : { ...merged, direction: 'rtl' };
+});
 
 /**
  * Returns the theme ids from the config.
@@ -81,11 +85,15 @@ export const getThemeIds = createSelector([getConfig], ({ themes }) => Object.ke
 export const getContainerId = createSelector([getConfig], ({ id }) => id);
 
 /**
- * Returns the theme direction from the config.
+ * Returns the theme direction from the config, falling back to a language-derived default (see
+ * getTheme) when no direction is explicitly configured.
  * @param {object} state
  * @returns {string}
  */
-export const getThemeDirection = createSelector([getConfig], ({ theme }) => theme.direction || 'ltr');
+export const getThemeDirection = createSelector(
+  [getConfig],
+  ({ theme, language }) => theme.direction || (isRtlLanguage(language) ? 'rtl' : 'ltr'),
+);
 /**
  * Returns the requests configurations from the config.
  * @param {object} state

@@ -1,52 +1,36 @@
-# Mirador
-[![Node.js CI](https://github.com/ProjectMirador/mirador/workflows/Node.js%20CI/badge.svg)](https://github.com/ProjectMirador/mirador/actions/workflows/node.js.yml) [![codecov](https://codecov.io/gh/ProjectMirador/mirador/branch/main/graph/badge.svg)](https://codecov.io/gh/ProjectMirador/mirador) 
+# DBF Map Mirador
 
-## For Mirador Users
-We recommend installing Mirador using a JavaScript package manager like [npm](https://www.npmjs.com/) or [yarn](https://yarnpkg.com/).
-
-```sh
-$ npm install dbf-mirador 
-
-# or
-
-$ yarn add dbf-mirador
-```
-
-If you are interested in integrating Mirador with plugins into your project, we recommend using vite to integrate the es version of the packages. Examples are here:
-
-[https://github.com/ProjectMirador/mirador-integration](https://github.com/ProjectMirador/mirador-integration)
-
-If you want to simply embed Mirador in an HTML page without further customization, include the Mirador UMD build:
-
-```html
-<script src="https://unpkg.com/dbf-mirador@latest/dist/mirador.min.js"></script>
-```
-
-Be aware that `latest` will at some point switch from version 3 to version 4. If you use Mirador via CDN in a production environment, consider pinning Mirador to version 3 to avoid sudden breaking changes:
-
-```html
-<script src="https://unpkg.com/mirador@^3/dist/mirador.min.js"></script>
-```
-
-
-More examples of embedding Mirador can be found at [https://github.com/ProjectMirador/mirador/wiki/M3-Embedding-in-Another-Environment#in-an-html-document-with-javascript](https://github.com/ProjectMirador/mirador/wiki/Embedding-in-Another-Environment).
-
-## Adding translations to Mirador
-For help with adding a translation, see [src/locales/README.md](src/locales/README.md)
+We forked the original Mirador project to create a version that is compatible with the DBF Map project. This version of Mirador is designed to work seamlessly with the DBF Map platform, providing users with an enhanced experience for viewing and interacting with digital content. More detail about the original Mirador project can be found [here](https://github.com/ProjectMirador/mirador). This readme will cover only minimal information about the original Mirador project and will focus on the changes made to support the DBF Map project.
 
 ## Running Mirador locally for development
 
 Mirador local development requires [nodejs](https://nodejs.org/en/download/) to be installed.
 
-1. Run `npm install` to install the dependencies.
+```
+git clone git@github.com:AlMadar-Digital/map-mirador.git
+cd map-mirador
+npm install
 
-### Starting the project
+```
+Then run the following command to start a local development server:
 
 ```sh
 $ npm start
 ```
 
 Then navigate to [http://127.0.0.1:4444/](http://127.0.0.1:4444/)
+
+## Install Mirador inside your project 
+
+`dbf-mirador` is available through NPM
+
+```sh
+$ npm install dbf-mirador 
+```
+
+### Mirador 
+
+Check the demo folder TODO
 
 ### Instantiating Mirador
 
@@ -59,24 +43,6 @@ var miradorInstance = Mirador.viewer({
 { actions, store }
 ```
 
-### Example Action
-
-Add a window:
-```javascript
-store.dispatch(actions.addWindow());
-```
-
-To focus a window run:
-
-```javascript
-store.dispatch(actions.focusWindow('window-1'))
-```
-
-### Check current state
-
-```javascript
-store.getState()
-```
 
 ## Running the tests
 We use Vitest to run our test suite.
@@ -101,33 +67,4 @@ $ npx vitest __tests__/integration/tests/sequence-switching.test.js --ui
 ```sh
 $ npm run lint
 ```
-## Image Fallback
 
-Mirador automatically displays a simple fallback placeholder when images fail to load. Customize the fallback image via configuration:
-
-```javascript
-const config = {
-  fallbackImage: 'https://example.com/custom-fallback.jpg',
-};
-```
-
-The error message is translatable via the `imageFailedToLoad` translation key. Detailed error information is logged to the console for debugging.
-
-## Debugging
-
-### Local instance
-
-The following browser extensions are useful for debugging a local development instance of Mirador:
-
- - [React DevTools](https://github.com/facebook/react-devtools)
- - [Redux DevTools](https://github.com/zalmoxisus/redux-devtools-extension)
-
-### Test suite
-
-To debug the test suite, run:
-
-```sh
-$ npm run test:debug
-```
-
-then spin up a [nodejs inspector client](https://nodejs.org/en/docs/guides/debugging-getting-started/#inspector-clients) and set some breakpoints. See [here](https://www.digitalocean.com/community/tutorials/how-to-debug-node-js-with-the-built-in-debugger-and-chrome-devtools#step-3-%E2%80%94-debugging-node-js-with-chrome-devtools) for a guide to debugging with Chrome DevTools.

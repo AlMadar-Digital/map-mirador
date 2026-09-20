@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+  <meta name="theme-color" content="#000000">
+  <title>Mirador - Map annotation editor demo</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,400,500">
+</head>
+
+<body>
+  <div id="mirador" style="position: absolute; top: 0; bottom: 0; left: 0; right: 0;"></div>
+
+  <script type="module">
+    import Mirador from '../src';
+    import annotationPlugins, { annotationAdapters } from 'dbf-mirador-annotation-editor';
+    import 'dbf-mirador-annotation-editor/dist/index.css';
+    import { defaultMapViewerConfig } from '../src/components/MapViewer';
+    import { poiPreviewPlugins } from '../src/plugins/poiPreviewPlugin.tsx';
+
+    const { LocalStorageAdapter } = annotationAdapters;
+
+    // Same map preset MapViewer wraps, plus MAE wired to browser-local storage so POIs and
+    // journeys can be created/edited here without a Strapi backend (see the maps plugin's own
+    // MiradorMaeViewer.tsx for the real, backend-backed adapter).
+    Mirador.viewer(
+      {
+        ...defaultMapViewerConfig,
+        annotation: {
+          adapter: (canvasId) => new LocalStorageAdapter(`localStorage://?canvasId=${canvasId}`, 'Demo User'),
+          allowTargetShapesStyling: true,
+          readonly: false,
+        },
+        id: 'mirador',
+        windows: [
+          {
+            manifestId: 'https://files.tetras-libre.fr/dev/dbf/mapnile.json',
+          },
+        ],
+      },
+      [...annotationPlugins, ...poiPreviewPlugins]
+    );
+  </script>
+</body>
+
+</html>

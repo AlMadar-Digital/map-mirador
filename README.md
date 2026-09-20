@@ -31,7 +31,9 @@ $ npm install dbf-mirador
 ### Mirador
 
 Check the `demo` folder for runnable examples, including `demo/index.html` (raw
-`Mirador.viewer()` usage) and `demo/map-viewer.html` (the `MapViewer` component below).
+`Mirador.viewer()` usage), `demo/map-viewer.html` (the `MapViewer` component below) and
+`demo/map-editor.html` (the map preset plus `dbf-mirador-annotation-editor`, so POIs and
+journeys can be created/edited against browser-local storage with no backend).
 
 ### Instantiating Mirador
 

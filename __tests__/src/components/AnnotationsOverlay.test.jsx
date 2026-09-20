@@ -144,6 +144,72 @@ describe('AnnotationsOverlay', () => {
       expect(context.lineWidth).toEqual(20);
       expect(strokeRect).toHaveBeenCalledWith(10, 10, 100, 200);
     });
+
+    it('draws a POI pin after (on top of) another annotation target listed before it, even when that target is a journey', () => {
+      const fill = vi.fn();
+      const strokeRect = vi.fn();
+      const context2d = {
+        arc: vi.fn(),
+        fill,
+        fillText: vi.fn(),
+        restore: vi.fn(),
+        save: vi.fn(),
+        scale: vi.fn(),
+        strokeRect,
+        translate: vi.fn(),
+      };
+
+      OpenSeadragonCanvasOverlay.mockImplementation(function () {
+        return {
+          canvasUpdate: (f) => f(),
+          clear: vi.fn(),
+          context2d,
+          resize: vi.fn(),
+        };
+      });
+
+      const { component, rerender, viewer } = createWrapper({
+        palette: { annotations: { default: { strokeStyle: 'yellow' } } },
+        viewer: null,
+      });
+
+      vi.spyOn(viewer.world, 'getItemAt').mockImplementation((index) =>
+        index === 0 ? { viewportToImageZoom: () => 1 } : undefined,
+      );
+      vi.spyOn(viewer.viewport, 'getZoom').mockImplementation(() => 1);
+
+      rerender(
+        cloneElement(component, {
+          annotations: [
+            new AnnotationList({
+              '@id': 'foo',
+              // The journey's own target is listed FIRST in store order, to prove draw order is
+              // reordered so the POI pin still ends up on top rather than following array order.
+              resources: [
+                {
+                  '@id': 'http://example.org/identifier/annotation/journey-1',
+                  on: 'http://iiif.io/api/presentation/2.0/example/fixtures/canvas/24/c1.json#xywh=10,10,100,200',
+                },
+                {
+                  '@id': 'http://example.org/identifier/annotation/poi-1',
+                  on: {
+                    full: 'http://iiif.io/api/presentation/2.0/example/fixtures/canvas/24/c1.json',
+                    selector: { '@type': 'oa:PointSelector', x: 50, y: 50 },
+                  },
+                },
+              ],
+            }),
+          ],
+          viewer,
+        }),
+      );
+
+      viewer.raiseEvent('update-viewport');
+
+      expect(strokeRect).toHaveBeenCalledWith(10, 10, 100, 200);
+      expect(fill).toHaveBeenCalled();
+      expect(Math.min(...fill.mock.invocationCallOrder)).toBeGreaterThan(Math.min(...strokeRect.mock.invocationCallOrder));
+    });
   });
 
   describe('onCanvasClick', () => {

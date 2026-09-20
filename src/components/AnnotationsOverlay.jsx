@@ -2,6 +2,7 @@ import { useRef, useEffect, useCallback, useMemo } from 'react';
 import ReactDOM from 'react-dom';
 import PropTypes from 'prop-types';
 import { useDebouncedCallback } from 'use-debounce';
+import partition from 'lodash/partition';
 import sortBy from 'lodash/sortBy';
 import xor from 'lodash/xor';
 import OpenSeadragonCanvasOverlay from '../lib/OpenSeadragonCanvasOverlay';
@@ -97,30 +98,36 @@ export function AnnotationsOverlay({
   const annotationsToContext = useCallback(
     (renderedAnnotations, currentPalette) => {
       const context = osdCanvasOverlay.context2d;
-      renderedAnnotations.forEach((annotation) => {
-        annotation.resources.forEach((resource) => {
-          const osdCanvasIndex = canvasWorld.canvases.findIndex((canvas) => canvas.id === resource.targetId);
-          if (osdCanvasIndex === -1) return;
-          const viewportCanvas = viewer.world.getItemAt(osdCanvasIndex);
-          if (!viewportCanvas) return;
-          const offset = canvasWorld.offsetByCanvas(resource.targetId);
-          const zoomRatio = viewportCanvas.viewportToImageZoom(viewer.viewport.getZoom(true));
-          const canvasAnnotationDisplay = new CanvasAnnotationDisplay({
-            hovered: hoveredAnnotationIds.includes(resource.id),
-            offset,
-            palette: {
-              ...currentPalette,
-              default: {
-                ...currentPalette.default,
-                ...(!highlightAllAnnotations && currentPalette.hidden),
-              },
+      const resources = renderedAnnotations.flatMap((annotation) => annotation.resources);
+
+      // POI pins always draw last, on top of every other annotation shape on the same canvas -
+      // notably including a Journey's own annotation target (an svg/fragment selector, not a
+      // pointSelector), which would otherwise draw in plain store order and can end up covering
+      // - and stealing clicks from - a POI pin it happens to overlap on screen.
+      const [otherResources, poiResources] = partition(resources, (resource) => !resource.pointSelector);
+
+      [...otherResources, ...poiResources].forEach((resource) => {
+        const osdCanvasIndex = canvasWorld.canvases.findIndex((canvas) => canvas.id === resource.targetId);
+        if (osdCanvasIndex === -1) return;
+        const viewportCanvas = viewer.world.getItemAt(osdCanvasIndex);
+        if (!viewportCanvas) return;
+        const offset = canvasWorld.offsetByCanvas(resource.targetId);
+        const zoomRatio = viewportCanvas.viewportToImageZoom(viewer.viewport.getZoom(true));
+        const canvasAnnotationDisplay = new CanvasAnnotationDisplay({
+          hovered: hoveredAnnotationIds.includes(resource.id),
+          offset,
+          palette: {
+            ...currentPalette,
+            default: {
+              ...currentPalette.default,
+              ...(!highlightAllAnnotations && currentPalette.hidden),
             },
-            resource,
-            selected: selectedAnnotationId === resource.id,
-            zoomRatio,
-          });
-          canvasAnnotationDisplay.toContext(context);
+          },
+          resource,
+          selected: selectedAnnotationId === resource.id,
+          zoomRatio,
         });
+        canvasAnnotationDisplay.toContext(context);
       });
     },
     [osdCanvasOverlay, viewer, canvasWorld, highlightAllAnnotations, hoveredAnnotationIds, selectedAnnotationId],

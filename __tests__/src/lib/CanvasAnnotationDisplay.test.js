@@ -236,8 +236,8 @@ describe('CanvasAnnotationDisplay', () => {
       expect(context.save).toHaveBeenCalledWith();
       // offset.x = -100, offset.y = 0 (from createSubject); point x=10, y=20
       expect(context.translate).toHaveBeenCalledWith(-90, 20);
-      // iconHeight = 32 / 0.5 = 64; iconScale = 64 / 100 = 0.64
-      expect(context.scale).toHaveBeenCalledWith(0.64, 0.64);
+      // iconHeight = 44 / 0.5 = 88; iconScale = 88 / 100 = 0.88
+      expect(context.scale).toHaveBeenCalledWith(0.88, 0.88);
       expect(context.fill).toHaveBeenCalled();
       expect(context.restore).toHaveBeenCalledWith();
     });

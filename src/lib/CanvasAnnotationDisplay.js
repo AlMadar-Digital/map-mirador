@@ -13,13 +13,15 @@ import { buildPath2D } from '../lib/svgShapesToPath';
 const POI_ICON_PATH_D =
   'M50.002 0C30.763 0 15 15.718 15 34.902c0 7.432 2.374 14.34 6.392 20.019L45.73 96.994c3.409 4.453 5.675 3.607 8.51-.235l26.843-45.683c.542-.981.967-2.026 1.338-3.092A34.446 34.446 0 0 0 85 34.902C85 15.718 69.24 0 50.002 0zm0 16.354c10.359 0 18.597 8.218 18.597 18.548c0 10.33-8.238 18.544-18.597 18.544c-10.36 0-18.601-8.215-18.601-18.544c0-10.33 8.241-18.548 18.6-18.548z';
 const POI_ICON_VIEWBOX_SIZE = 100;
-/** The icon's own point (its pin tip), in viewBox units - this is what gets placed exactly on the annotated coordinate, not the icon's bounding-box center. */
-const POI_ICON_TIP = { x: 50, y: 97 };
+/** The icon's own point (its pin tip), in viewBox units - this is what gets placed exactly on the annotated coordinate, not the icon's bounding-box center. Derived from the path's actual lowest point (~50, 100), not just its nearby `L` command endpoint. */
+const POI_ICON_TIP = { x: 50, y: 100 };
 /** Center/radius of the icon's circular head, in viewBox units - where a journey-order badge is drawn, overlapping the icon like a numbered pin. */
 const POI_ICON_HEAD = { x: 50, y: 34.9, radius: 18.6 };
+/** Font size of the journey-order number, relative to POI_ICON_HEAD.radius, so it's bigger than the badge circle would otherwise imply while the circle itself stays the same size. */
+const POI_ICON_HEAD_FONT_SCALE = 1.4;
 const POI_ICON_DEFAULT_FILL = '#1e88e5';
 /** Constant on-screen height (CSS px) for the POI icon, regardless of zoom - counter-scaled the same way this class already counter-scales stroke width (see `lineWidth /= zoomRatio` in svgContext). */
-export const POI_ICON_HEIGHT_PX = 32;
+export const POI_ICON_HEIGHT_PX = 44;
 
 export default class CanvasAnnotationDisplay {
   /** */
@@ -95,7 +97,7 @@ export default class CanvasAnnotationDisplay {
     this.context.fill();
 
     this.context.fillStyle = this.currentPalette().fillStyle || POI_ICON_DEFAULT_FILL;
-    this.context.font = `bold ${POI_ICON_HEAD.radius}px sans-serif`;
+    this.context.font = `bold ${POI_ICON_HEAD.radius * POI_ICON_HEAD_FONT_SCALE}px sans-serif`;
     this.context.textAlign = 'center';
     this.context.textBaseline = 'middle';
     this.context.fillText(String(order), POI_ICON_HEAD.x, POI_ICON_HEAD.y);

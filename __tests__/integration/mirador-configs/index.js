@@ -10,6 +10,15 @@ export default {
   id: 'mirador',
   theme: {
     transitions: {},
+    components: {
+      WindowTopBar: {
+        styleOverrides: {
+          root: {
+            display: 'none',
+          },
+        },
+      },
+    },
   },
   windows: [
     {
@@ -20,5 +29,11 @@ export default {
     defaultSideBarPanel: 'annotations',
     sideBarOpenByDefault: true,
     highlightAllAnnotations: true,
+    panels: {
+      canvas: false,
+    },
+  },
+  workspaceControlPanel: {
+    enabled: false,
   },
 };

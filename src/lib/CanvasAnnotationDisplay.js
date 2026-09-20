@@ -4,6 +4,23 @@
  */
 import { buildPath2D } from '../lib/svgShapesToPath';
 
+/**
+ * The POI marker icon's path data and viewBox, copied from src/assets/icons/poi-marker.svg -
+ * inlined as a Path2D (rather than loaded as an image via drawImage) so it renders as a crisp
+ * vector at any zoom with no async image-load step to coordinate with the render loop. Update
+ * this constant (and the asset file, for reference) together if the icon changes.
+ */
+const POI_ICON_PATH_D =
+  'M50.002 0C30.763 0 15 15.718 15 34.902c0 7.432 2.374 14.34 6.392 20.019L45.73 96.994c3.409 4.453 5.675 3.607 8.51-.235l26.843-45.683c.542-.981.967-2.026 1.338-3.092A34.446 34.446 0 0 0 85 34.902C85 15.718 69.24 0 50.002 0zm0 16.354c10.359 0 18.597 8.218 18.597 18.548c0 10.33-8.238 18.544-18.597 18.544c-10.36 0-18.601-8.215-18.601-18.544c0-10.33 8.241-18.548 18.6-18.548z';
+const POI_ICON_VIEWBOX_SIZE = 100;
+/** The icon's own point (its pin tip), in viewBox units - this is what gets placed exactly on the annotated coordinate, not the icon's bounding-box center. */
+const POI_ICON_TIP = { x: 50, y: 97 };
+/** Center/radius of the icon's circular head, in viewBox units - where a journey-order badge is drawn, overlapping the icon like a numbered pin. */
+const POI_ICON_HEAD = { x: 50, y: 34.9, radius: 18.6 };
+const POI_ICON_DEFAULT_FILL = '#1e88e5';
+/** Constant on-screen height (CSS px) for the POI icon, regardless of zoom - counter-scaled the same way this class already counter-scales stroke width (see `lineWidth /= zoomRatio` in svgContext). */
+export const POI_ICON_HEIGHT_PX = 32;
+
 export default class CanvasAnnotationDisplay {
   /** */
   constructor({ resource, palette, zoomRatio, offset, selected, hovered }) {
@@ -20,9 +37,68 @@ export default class CanvasAnnotationDisplay {
     this.context = context;
     if (this.resource.svgSelector) {
       this.svgContext();
+    } else if (this.resource.pointSelector) {
+      this.pointContext();
     } else if (this.resource.fragmentSelector) {
       this.fragmentContext();
     }
+  }
+
+  /** */
+  currentPalette() {
+    if (this.hovered) return this.palette.hovered;
+    if (this.selected) return this.palette.selected;
+    return this.palette.default;
+  }
+
+  /**
+   * Draws a POI marker (IIIF PointSelector) as the SVG pin icon, at a constant on-screen size,
+   * with the icon's own tip placed exactly on the annotated point. When the annotation carries
+   * journey-order metadata (`dbf:journey.order`), also draws a numbered badge over the icon's
+   * head, so a POI's position within its journey is visible directly on the map.
+   */
+  pointContext() {
+    const { x, y } = this.resource.pointSelector;
+    const currentPalette = this.currentPalette();
+    if (currentPalette.globalAlpha === 0) return;
+
+    const iconHeight = POI_ICON_HEIGHT_PX / this.zoomRatio;
+    const iconScale = iconHeight / POI_ICON_VIEWBOX_SIZE;
+
+    this.context.save();
+    this.context.translate(this.offset.x + x, this.offset.y + y);
+    this.context.scale(iconScale, iconScale);
+    this.context.translate(-POI_ICON_TIP.x, -POI_ICON_TIP.y);
+
+    this.context.globalAlpha = currentPalette.globalAlpha ?? 1;
+    this.context.fillStyle = currentPalette.fillStyle || POI_ICON_DEFAULT_FILL;
+    this.context.fill(new Path2D(POI_ICON_PATH_D));
+
+    const { journeyOrder } = this.resource;
+    if (journeyOrder != null) {
+      this.journeyOrderBadgeContext(journeyOrder);
+    }
+
+    this.context.restore();
+  }
+
+  /**
+   * Draws a small numbered circle over the POI icon's head, in the icon's own (viewBox-unit,
+   * already-scaled/translated) coordinate space - called from within pointContext's transform,
+   * before it restores the context.
+   * @param {number} order
+   */
+  journeyOrderBadgeContext(order) {
+    this.context.beginPath();
+    this.context.arc(POI_ICON_HEAD.x, POI_ICON_HEAD.y, POI_ICON_HEAD.radius, 0, Math.PI * 2);
+    this.context.fillStyle = '#ffffff';
+    this.context.fill();
+
+    this.context.fillStyle = this.currentPalette().fillStyle || POI_ICON_DEFAULT_FILL;
+    this.context.font = `bold ${POI_ICON_HEAD.radius}px sans-serif`;
+    this.context.textAlign = 'center';
+    this.context.textBaseline = 'middle';
+    this.context.fillText(String(order), POI_ICON_HEAD.x, POI_ICON_HEAD.y);
   }
 
   /** */

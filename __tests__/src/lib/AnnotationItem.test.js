@@ -152,4 +152,26 @@ describe('AnnotationItem', () => {
       expect(new AnnotationItem({ target: { selector: {} } }).svgSelector).toEqual(undefined);
     });
   });
+  describe('pointSelector', () => {
+    it('finds a PointSelector by type', () => {
+      expect(new AnnotationItem({ target: { selector: { type: 'PointSelector', x: 10, y: 20 } } }).pointSelector).toEqual({
+        type: 'PointSelector',
+        x: 10,
+        y: 20,
+      });
+    });
+
+    it('returns null for a simple string target', () => {
+      expect(new AnnotationItem({ target: 'www.example.com/#xywh=10,10,100,200' }).pointSelector).toBeNull();
+    });
+  });
+  describe('journeyOrder', () => {
+    it('returns the order from dbf:journey', () => {
+      expect(new AnnotationItem({ 'dbf:journey': { id: 'j1', order: 3 } }).journeyOrder).toBe(3);
+    });
+
+    it('returns null when the POI has no journey', () => {
+      expect(new AnnotationItem({}).journeyOrder).toBeNull();
+    });
+  });
 });

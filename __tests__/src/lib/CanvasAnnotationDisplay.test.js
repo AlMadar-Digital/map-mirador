@@ -21,9 +21,13 @@ function createSubject(args) {
 
 function createMockContext(onFill = '') {
   return {
+    arc: vi.fn(),
+    beginPath: vi.fn(),
     fill: vi.fn(onFill),
+    fillText: vi.fn(),
     restore: vi.fn(),
     save: vi.fn(),
+    scale: vi.fn(),
     setLineDash: vi.fn(),
     stroke: vi.fn(),
     strokeRect: vi.fn(),
@@ -88,6 +92,18 @@ describe('CanvasAnnotationDisplay', () => {
       subject.toContext(createMockContext());
       expect(subject.svgContext).not.toHaveBeenCalled();
       expect(subject.fragmentContext).toHaveBeenCalled();
+    });
+    it('selects pointContext if present, over fragmentSelector', () => {
+      const subject = createSubject({
+        resource: new AnnotationResource({
+          on: { selector: { '@type': 'oa:PointSelector', x: 10, y: 20 } },
+        }),
+      });
+      subject.pointContext = vi.fn();
+      subject.fragmentContext = vi.fn();
+      subject.toContext(createMockContext());
+      expect(subject.pointContext).toHaveBeenCalled();
+      expect(subject.fragmentContext).not.toHaveBeenCalled();
     });
     it('ignores annotations without selectors', () => {
       const subject = createSubject({
@@ -202,6 +218,64 @@ describe('CanvasAnnotationDisplay', () => {
       expect(subject.context.strokeStyle).toBe('yellow');
     });
   });
+  describe('pointContext', () => {
+    /** */
+    function createPointResource(extra = {}) {
+      return new AnnotationResource({
+        on: { selector: { '@type': 'oa:PointSelector', x: 10, y: 20 } },
+        ...extra,
+      });
+    }
+
+    it('draws the icon fill centered on the annotated point, counter-scaled by zoomRatio', () => {
+      const context = createMockContext();
+      const subject = createSubject({ resource: createPointResource(), zoomRatio: 0.5 });
+      subject.context = context;
+      subject.pointContext();
+
+      expect(context.save).toHaveBeenCalledWith();
+      // offset.x = -100, offset.y = 0 (from createSubject); point x=10, y=20
+      expect(context.translate).toHaveBeenCalledWith(-90, 20);
+      // iconHeight = 32 / 0.5 = 64; iconScale = 64 / 100 = 0.64
+      expect(context.scale).toHaveBeenCalledWith(0.64, 0.64);
+      expect(context.fill).toHaveBeenCalled();
+      expect(context.restore).toHaveBeenCalledWith();
+    });
+
+    it('does not draw when globalAlpha is 0', () => {
+      const context = createMockContext();
+      const subject = createSubject({ resource: createPointResource() });
+      subject.context = context;
+      subject.palette.default.globalAlpha = 0;
+      subject.pointContext();
+
+      expect(context.fill).not.toHaveBeenCalled();
+      expect(context.save).not.toHaveBeenCalled();
+    });
+
+    it('does not draw a journey-order badge when the POI is not part of a journey', () => {
+      const context = createMockContext();
+      const subject = createSubject({ resource: createPointResource() });
+      subject.context = context;
+      subject.pointContext();
+
+      expect(context.arc).not.toHaveBeenCalled();
+      expect(context.fillText).not.toHaveBeenCalled();
+    });
+
+    it('draws a numbered badge over the icon head when the POI belongs to a journey', () => {
+      const context = createMockContext();
+      const subject = createSubject({
+        resource: createPointResource({ 'dbf:journey': { id: 'journey1', order: 3 } }),
+      });
+      subject.context = context;
+      subject.pointContext();
+
+      expect(context.arc).toHaveBeenCalledWith(50, 34.9, 18.6, 0, Math.PI * 2);
+      expect(context.fillText).toHaveBeenCalledWith('3', 50, 34.9);
+    });
+  });
+
   describe('fragmentContext', () => {
     it('draws the fragment with selected arguments', () => {
       let alphaAtFill;

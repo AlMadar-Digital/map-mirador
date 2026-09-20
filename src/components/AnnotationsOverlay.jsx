@@ -6,11 +6,11 @@ import sortBy from 'lodash/sortBy';
 import xor from 'lodash/xor';
 import OpenSeadragonCanvasOverlay from '../lib/OpenSeadragonCanvasOverlay';
 import CanvasWorld from '../lib/CanvasWorld';
-import CanvasAnnotationDisplay from '../lib/CanvasAnnotationDisplay';
+import CanvasAnnotationDisplay, { POI_ICON_HEIGHT_PX } from '../lib/CanvasAnnotationDisplay';
 import { buildPath2D } from '../lib/svgShapesToPath';
 
 /** @private */
-function isAnnotationAtPoint(canvasWorld, osdCanvasOverlay, resource, canvas, point) {
+function isAnnotationAtPoint({ canvasWorld, osdCanvasOverlay, viewer }, resource, canvas, point) {
   const [canvasX, canvasY] = canvasWorld.canvasToWorldCoordinates(canvas.id);
   const relativeX = point.x - canvasX;
   const relativeY = point.y - canvasY;
@@ -19,6 +19,21 @@ function isAnnotationAtPoint(canvasWorld, osdCanvasOverlay, resource, canvas, po
     const context = osdCanvasOverlay.context2d;
     const { svgPaths } = new CanvasAnnotationDisplay({ resource });
     return [...svgPaths].some((path) => context.isPointInPath(buildPath2D(path), relativeX, relativeY));
+  }
+
+  if (resource.pointSelector) {
+    const { x, y } = resource.pointSelector;
+    const osdCanvasIndex = canvasWorld.canvases.findIndex((c) => c.id === canvas.id);
+    const viewportCanvas = viewer.world.getItemAt(osdCanvasIndex);
+    if (!viewportCanvas) return false;
+    // The icon renders at a constant on-screen size regardless of zoom (see
+    // CanvasAnnotationDisplay#pointContext), so its clickable footprint must counter-scale the
+    // same way, or the hit region would shrink/grow with the image instead of the icon.
+    const zoomRatio = viewportCanvas.viewportToImageZoom(viewer.viewport.getZoom(true));
+    const hitRadius = POI_ICON_HEIGHT_PX / 2 / zoomRatio;
+    const dx = relativeX - x;
+    const dy = relativeY - y;
+    return dx * dx + dy * dy <= hitRadius * hitRadius;
   }
 
   if (resource.fragmentSelector) {
@@ -137,12 +152,12 @@ export function AnnotationsOverlay({
         .filter((resource) => {
           if (canvas.id !== resource.targetId) return false;
 
-          return isAnnotationAtPoint(canvasWorld, osdCanvasOverlay, resource, canvas, point);
+          return isAnnotationAtPoint({ canvasWorld, osdCanvasOverlay, viewer }, resource, canvas, point);
         });
 
       return annos;
     },
-    [annotations, canvasWorld, osdCanvasOverlay, searchAnnotations],
+    [annotations, canvasWorld, osdCanvasOverlay, searchAnnotations, viewer],
   );
 
   const onCanvasClick = useCallback(
@@ -188,7 +203,7 @@ export function AnnotationsOverlay({
               const x = Math.cos(degrees * degreesToRadians) * radius + point.x;
               const y = Math.sin(degrees * degreesToRadians) * radius + point.y;
 
-              if (isAnnotationAtPoint(canvasWorld, osdCanvasOverlay, anno, canvas, { x, y })) score += 1;
+              if (isAnnotationAtPoint({ canvasWorld, osdCanvasOverlay, viewer }, anno, canvas, { x, y })) score += 1;
             }
 
             return { anno, score };
@@ -206,7 +221,7 @@ export function AnnotationsOverlay({
         toggleAnnotation(annosWithScore[0].anno.id);
       }
     },
-    [annotationsAtPoint, canvasWorld, osdCanvasOverlay, toggleAnnotation],
+    [annotationsAtPoint, canvasWorld, osdCanvasOverlay, toggleAnnotation, viewer],
   );
 
   const onCanvasMouseMove = useDebouncedCallback(

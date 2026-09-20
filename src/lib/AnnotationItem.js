@@ -120,4 +120,22 @@ export default class AnnotationItem {
 
     return match && match[1].split(',').map((str) => parseInt(str, 10));
   }
+
+  /** */
+  get pointSelector() {
+    const { selector } = this;
+    switch (typeof selector) {
+      case 'string':
+        return null;
+      case 'object':
+        return selector.find((s) => s.type && s.type === 'PointSelector');
+      default:
+        return null;
+    }
+  }
+
+  /** the POI's position within its journey (see mirador-annotation-editor's `dbf:journey`), or null when the POI is not part of a journey */
+  get journeyOrder() {
+    return this.resource['dbf:journey']?.order ?? null;
+  }
 }

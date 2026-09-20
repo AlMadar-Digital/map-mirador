@@ -194,4 +194,32 @@ describe('AnnotationResource', () => {
       expect(new AnnotationResource({ on: [{ selector: { item: {} } }] }).svgSelector).toEqual(null);
     });
   });
+  describe('pointSelector', () => {
+    it('extracts x/y from an oa:PointSelector', () => {
+      expect(
+        new AnnotationResource({
+          on: { selector: { '@type': 'oa:PointSelector', x: 10, y: 20 } },
+        }).pointSelector,
+      ).toEqual({ x: 10, y: 20 });
+    });
+
+    it('returns null for a simple string target', () => {
+      expect(new AnnotationResource({ on: 'www.example.com/#xywh=10,10,100,200' }).pointSelector).toBeNull();
+    });
+
+    it('returns null for a non-PointSelector object selector', () => {
+      expect(
+        new AnnotationResource({ on: { selector: { value: 'www.example.com/#xywh=10,10,100,200' } } }).pointSelector,
+      ).toBeNull();
+    });
+  });
+  describe('journeyOrder', () => {
+    it('returns the order from dbf:journey', () => {
+      expect(new AnnotationResource({ 'dbf:journey': { id: 'j1', order: 3 } }).journeyOrder).toBe(3);
+    });
+
+    it('returns null when the POI has no journey', () => {
+      expect(new AnnotationResource({}).journeyOrder).toBeNull();
+    });
+  });
 });

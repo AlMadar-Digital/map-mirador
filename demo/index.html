@@ -14,8 +14,8 @@
 
   <script type="module">
     import Mirador from '../src';
-    import config from '../__tests__/integration/mirador-configs/index.js';
-    Mirador.viewer(config);
+    import config, { plugins } from '../__tests__/integration/mirador-configs/index.js';
+    Mirador.viewer(config, plugins);
   </script>
 </body>
 

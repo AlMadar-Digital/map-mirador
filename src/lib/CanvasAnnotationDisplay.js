@@ -18,7 +18,7 @@ const POI_ICON_TIP = { x: 50, y: 100 };
 /** Center/radius of the icon's circular head, in viewBox units - where a journey-order badge is drawn, overlapping the icon like a numbered pin. */
 const POI_ICON_HEAD = { x: 50, y: 34.9, radius: 18.6 };
 /** Font size of the journey-order number, relative to POI_ICON_HEAD.radius, so it's bigger than the badge circle would otherwise imply while the circle itself stays the same size. */
-const POI_ICON_HEAD_FONT_SCALE = 1.4;
+const POI_ICON_HEAD_FONT_SCALE = 1.6;
 const POI_ICON_DEFAULT_FILL = '#1e88e5';
 /** Constant on-screen height (CSS px) for the POI icon, regardless of zoom - counter-scaled the same way this class already counter-scales stroke width (see `lineWidth /= zoomRatio` in svgContext). */
 export const POI_ICON_HEIGHT_PX = 44;

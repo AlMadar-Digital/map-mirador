@@ -1,6 +1,6 @@
 {
   "name": "dbf-mirador",
-  "version": "4.2.5",
+  "version": "4.3.0-testing3",
   "description": "An open-source, web-based 'multi-up' viewer that supports zoom-pan-rotate functionality, ability to display/compare simple images, and images with annotations.",
   "type": "module",
   "main": "./dist/mirador.min.js",
@@ -29,7 +29,8 @@
     "lint:translations": "node ./scripts/i18n-lint.js",
     "size": "size-limit",
     "start": "vite",
-    "test": "npm run build && npm run lint && npm run size && vitest run"
+    "test": "npm run build && npm run lint && npm run size && vitest run",
+    "prepublishOnly": "npm run build"
   },
   "license": "Apache-2.0",
   "contributors": [

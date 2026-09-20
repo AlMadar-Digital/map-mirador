@@ -28,9 +28,10 @@ Then navigate to [http://127.0.0.1:4444/](http://127.0.0.1:4444/)
 $ npm install dbf-mirador 
 ```
 
-### Mirador 
+### Mirador
 
-Check the demo folder TODO
+Check the `demo` folder for runnable examples, including `demo/index.html` (raw
+`Mirador.viewer()` usage) and `demo/map-viewer.html` (the `MapViewer` component below).
 
 ### Instantiating Mirador
 
@@ -42,6 +43,23 @@ var miradorInstance = Mirador.viewer({
 > miradorInstance
 { actions, store }
 ```
+
+### `MapViewer` component
+
+For consumers that just want to render a manifest as a map - without learning Mirador's own
+config/plugin API - `MapViewer` is a React component that wraps `Mirador.viewer()` with a
+preset config (annotation sidebar open by default, window chrome hidden, single-window
+layout). The only required prop is the manifest URL:
+
+```jsx
+import { MapViewer } from 'dbf-mirador';
+
+function App() {
+  return <MapViewer manifestId="https://files.tetras-libre.fr/dev/dbf/mapnile.json" />;
+}
+```
+
+Run `npm start` and open `/demo/map-viewer.html` to see it live.
 
 
 ## Running the tests

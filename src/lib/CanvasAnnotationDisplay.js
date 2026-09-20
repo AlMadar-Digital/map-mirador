@@ -22,6 +22,32 @@ const POI_ICON_HEAD_FONT_SCALE = 1.6;
 const POI_ICON_DEFAULT_FILL = '#1e88e5';
 /** Constant on-screen height (CSS px) for the POI icon, regardless of zoom - counter-scaled the same way this class already counter-scales stroke width (see `lineWidth /= zoomRatio` in svgContext). */
 export const POI_ICON_HEIGHT_PX = 44;
+/**
+ * On-screen radius (CSS px, before counter-scaling by zoomRatio) of a POI marker's
+ * clickable/tappable hit target - deliberately independent of, and larger than, the icon's
+ * visual size (POI_ICON_HEIGHT_PX). The icon tapers to a fine point at its anchor, which is
+ * hard to hit precisely with a mouse and well under the ~44-48px minimum touch target size
+ * recommended for mobile (Apple HIG / Material Design), so the tappable area is deliberately
+ * generous rather than matching the icon's own footprint.
+ */
+export const POI_ICON_HIT_RADIUS_PX = 32;
+
+/**
+ * The on-screen hit-test circle (already counter-scaled by zoomRatio, in the same coordinate
+ * space as a resource's `pointSelector`) for a POI marker anchored at (x, y). Centered on the
+ * icon's round head rather than its pin tip: the tip is the anchor point used for rendering
+ * (see pointContext/POI_ICON_TIP), but it's the least visually prominent, hardest-to-aim-for
+ * part of the icon, so hit-testing there instead of at the head would make the marker harder,
+ * not easier, to hit.
+ */
+export function poiHitTarget(x, y, zoomRatio) {
+  const iconScale = POI_ICON_HEIGHT_PX / zoomRatio / POI_ICON_VIEWBOX_SIZE;
+  return {
+    radius: POI_ICON_HIT_RADIUS_PX / zoomRatio,
+    x: x + (POI_ICON_HEAD.x - POI_ICON_TIP.x) * iconScale,
+    y: y + (POI_ICON_HEAD.y - POI_ICON_TIP.y) * iconScale,
+  };
+}
 
 export default class CanvasAnnotationDisplay {
   /** */

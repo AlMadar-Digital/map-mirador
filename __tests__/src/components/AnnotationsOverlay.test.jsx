@@ -6,6 +6,7 @@ import { getCanvasWorld } from '../../utils/mirador-wrappers';
 import { AnnotationsOverlay } from '../../../src/components/AnnotationsOverlay';
 import OpenSeadragonCanvasOverlay from '../../../src/lib/OpenSeadragonCanvasOverlay';
 import AnnotationList from '../../../src/lib/AnnotationList';
+import AnnotationPage from '../../../src/lib/AnnotationPage';
 import fixture from '../../fixtures/version-2/019.json';
 
 const canvases = Utils.parseManifest(fixture).getSequences()[0].getCanvases();
@@ -287,6 +288,63 @@ describe('AnnotationsOverlay', () => {
         'base',
         'http://example.org/identifier/annotation/anno-line',
       );
+    });
+  });
+
+  describe('onCanvasClick with a POI marker (pointSelector)', () => {
+    /** Builds a wrapper with a single POI annotation anchored at (150, 150) and a fixed zoomRatio of 1 */
+    const createPoiWrapper = (selectAnnotation) => {
+      const { viewer } = createWrapper({
+        annotations: [
+          new AnnotationPage({
+            id: 'foo',
+            items: [
+              {
+                id: 'http://example.org/identifier/annotation/poi-1',
+                motivation: 'highlighting',
+                target: {
+                  selector: [{ type: 'PointSelector', x: 150, y: 150 }],
+                  source: 'http://iiif.io/api/presentation/2.0/example/fixtures/canvas/24/c1.json',
+                },
+              },
+            ],
+          }),
+        ],
+        selectAnnotation,
+      });
+
+      vi.spyOn(viewer.world, 'getItemAt').mockImplementation((index) =>
+        index === 0 ? { viewportToImageZoom: () => 1 } : undefined,
+      );
+      vi.spyOn(viewer.viewport, 'getZoom').mockImplementation(() => 1);
+
+      return viewer;
+    };
+
+    it('selects a POI clicked well off its anchor point, inside the enlarged/shifted hit target', () => {
+      const selectAnnotation = vi.fn();
+      const viewer = createPoiWrapper(selectAnnotation);
+
+      // 25px above the anchor: outside the old tip-centered, icon-sized hit circle
+      // (radius 22 at zoomRatio 1), but inside the new head-centered, touch-friendly one.
+      viewer.raiseEvent('canvas-click', {
+        eventSource: { viewport: viewer.viewport },
+        position: new OpenSeadragon.Point(150, 125),
+      });
+
+      expect(selectAnnotation).toHaveBeenCalledWith('base', 'http://example.org/identifier/annotation/poi-1');
+    });
+
+    it('does not select a POI clicked well outside the hit target', () => {
+      const selectAnnotation = vi.fn();
+      const viewer = createPoiWrapper(selectAnnotation);
+
+      viewer.raiseEvent('canvas-click', {
+        eventSource: { viewport: viewer.viewport },
+        position: new OpenSeadragon.Point(150, 40),
+      });
+
+      expect(selectAnnotation).not.toHaveBeenCalled();
     });
   });
 

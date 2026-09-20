@@ -6,7 +6,7 @@ import sortBy from 'lodash/sortBy';
 import xor from 'lodash/xor';
 import OpenSeadragonCanvasOverlay from '../lib/OpenSeadragonCanvasOverlay';
 import CanvasWorld from '../lib/CanvasWorld';
-import CanvasAnnotationDisplay, { POI_ICON_HEIGHT_PX } from '../lib/CanvasAnnotationDisplay';
+import CanvasAnnotationDisplay, { poiHitTarget } from '../lib/CanvasAnnotationDisplay';
 import { buildPath2D } from '../lib/svgShapesToPath';
 
 /** @private */
@@ -30,10 +30,10 @@ function isAnnotationAtPoint({ canvasWorld, osdCanvasOverlay, viewer }, resource
     // CanvasAnnotationDisplay#pointContext), so its clickable footprint must counter-scale the
     // same way, or the hit region would shrink/grow with the image instead of the icon.
     const zoomRatio = viewportCanvas.viewportToImageZoom(viewer.viewport.getZoom(true));
-    const hitRadius = POI_ICON_HEIGHT_PX / 2 / zoomRatio;
-    const dx = relativeX - x;
-    const dy = relativeY - y;
-    return dx * dx + dy * dy <= hitRadius * hitRadius;
+    const hitTarget = poiHitTarget(x, y, zoomRatio);
+    const dx = relativeX - hitTarget.x;
+    const dy = relativeY - hitTarget.y;
+    return dx * dx + dy * dy <= hitTarget.radius * hitTarget.radius;
   }
 
   if (resource.fragmentSelector) {

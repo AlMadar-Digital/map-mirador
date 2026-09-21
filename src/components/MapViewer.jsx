@@ -22,7 +22,11 @@ export const defaultMapViewerConfig = {
   },
   window: {
     defaultSideBarPanel: 'annotations',
-    sideBarOpenByDefault: true,
+    // Closed by default (issue #410): the left sidebar (annotation list, table of
+    // contents, etc.) is Mirador's own document-viewer chrome, not part of the map UI -
+    // POIs/journeys are opened through the canvas or the poiPreview companion window
+    // instead. `highlightAllAnnotations` still draws markers on the canvas regardless.
+    sideBarOpenByDefault: false,
     highlightAllAnnotations: true,
     panels: {
       canvas: false,

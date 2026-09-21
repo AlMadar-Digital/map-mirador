@@ -1,4 +1,6 @@
 import { useState, type ComponentType } from 'react';
+import useMediaQuery from '@mui/material/useMediaQuery';
+import { useTheme } from '@mui/material/styles';
 import {
   ConnectedCompanionWindow as CompanionWindow,
   addCompanionWindow,
@@ -303,6 +305,12 @@ const AnnotationsOverlayPoiClickWrapper = ({
 }: AnnotationsOverlayPoiClickWrapperProps) => {
   const { annotations = [], searchAnnotations = [], selectAnnotation } = targetProps;
 
+  const theme = useTheme();
+  // Issue #410: on a phone-width viewport there's no room for a right-hand rail next to
+  // the map, so the POI/journey preview opens as a bottom sheet instead.
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+  const previewPosition = isMobile ? 'bottom' : 'right';
+
   const selectAnnotationAndMaybePreview = (clickedWindowId: string, annotationId: string) => {
     selectAnnotation?.(clickedWindowId, annotationId);
 
@@ -315,12 +323,13 @@ const AnnotationsOverlayPoiClickWrapper = ({
     if (existingPreviewCompanionWindowId) {
       dispatchUpdateCompanionWindow(clickedWindowId, existingPreviewCompanionWindowId, {
         annotationid: annotationId,
+        position: previewPosition,
       });
     } else {
       dispatchAddCompanionWindow(clickedWindowId, {
         annotationid: annotationId,
         content: POI_PREVIEW_CONTENT_ID,
-        position: 'right',
+        position: previewPosition,
       });
     }
   };

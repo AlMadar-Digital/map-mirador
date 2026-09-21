@@ -114,6 +114,16 @@ export default defineConfig({
       '@tests/': fileURLToPath(new URL('./__tests__', import.meta.url)),
     },
   },
+  optimizeDeps: {
+    // dbf-mirador-annotation-editor externalizes react-konva in its own build so it's not
+    // baked in at the wrong React major (see that package's vite.config.js), but Vite's dev
+    // dependency scanner only discovers react-konva via that package's internal import (not
+    // this app's own source), so it inlines react-konva - and its react-reconciler, which
+    // reads a React-internals export whose name differs across React majors - into the same
+    // optimized chunk instead of pre-bundling it separately against this app's real React.
+    // Forcing it into its own entry here avoids that.
+    include: ['react-konva'],
+  },
   server: {
     fs: {
       allow: [

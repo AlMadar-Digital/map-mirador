@@ -264,9 +264,10 @@ const poiPreviewCompanionWindowPlugin = {
 };
 
 // A canvas annotation resource, as AnnotationsOverlay's own `annotations`/`searchAnnotations`
-// props carry it (see AnnotationItem#pointSelector) - a POI marker is any resource with a
-// pointSelector, exactly the condition CanvasAnnotationDisplay#pointContext draws on.
-type AnnotationResourceLike = { id: string; pointSelector?: unknown };
+// props carry it (see AnnotationItem#pointSelector/#svgSelector) - a POI marker is any resource
+// with a pointSelector (CanvasAnnotationDisplay#pointContext), a Journey's own canvas target is
+// one with an svgSelector (AnnotationsOverlay#isAnnotationAtPoint's own svgSelector branch).
+type AnnotationResourceLike = { id: string; pointSelector?: unknown; svgSelector?: unknown };
 type AnnotationListItem = { resources?: AnnotationResourceLike[] };
 
 interface AnnotationsOverlayTargetProps {
@@ -287,9 +288,10 @@ interface AnnotationsOverlayPoiClickWrapperProps {
 
 // Wraps AnnotationsOverlay (the component that owns the OSD canvas-click handler and the
 // select/deselect-annotation dispatch, see AnnotationsOverlay#toggleAnnotation) so that
-// clicking a POI marker on the canvas - not just a row in a list somewhere - opens this same
-// preview companion window a "Preview" button would (issue #375's own follow-up: pins on the
-// map itself). Re-uses an already-open preview window instead of stacking a new one per click.
+// clicking a POI marker OR a Journey's own path on the canvas - not just a row in a list
+// somewhere - opens this same preview companion window a "Preview" button would (issue #375's
+// own follow-up: pins on the map itself; issue #378 extends this to journeys). Re-uses an
+// already-open preview window instead of stacking a new one per click.
 const AnnotationsOverlayPoiClickWrapper = ({
   TargetComponent,
   targetProps,
@@ -306,7 +308,9 @@ const AnnotationsOverlayPoiClickWrapper = ({
       .flatMap((item) => item.resources ?? [])
       .find((item) => item.id === annotationId);
 
-    if (!resource?.pointSelector) return;
+    // pointSelector => POI pin, svgSelector => a Journey's own canvas target (its path/stops
+    // line) - anything else (e.g. a fragmentSelector) has no preview content, skip it.
+    if (!resource?.pointSelector && !resource?.svgSelector) return;
 
     if (existingPreviewCompanionWindowId) {
       dispatchUpdateCompanionWindow(clickedWindowId, existingPreviewCompanionWindowId, {

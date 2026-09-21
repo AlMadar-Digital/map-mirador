@@ -103,7 +103,7 @@
     "chalk": "^5.3.0",
     "ckeditor5": "~47.6.1",
     "dbf-mirador": "file:.",
-    "dbf-mirador-annotation-editor": "^1.5.4",
+    "dbf-mirador-annotation-editor": "^1.6.0-testing2",
     "eslint": "^10.0.0",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-import": "^2.32.0",

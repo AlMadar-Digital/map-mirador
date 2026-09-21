@@ -17,7 +17,7 @@ describe('Basic end to end Mirador', () => {
     // eslint-disable-next-line testing-library/no-node-access
     fireEvent.change(document.getElementById('manifestURL'), {
       target: {
-        value: 'https://iiif.io/api/cookbook/recipe/0266-full-canvas-annotation/manifest.json',
+        value: '__tests__/fixtures/version-3/0001-mvm-image.json',
       },
     });
 
@@ -25,15 +25,13 @@ describe('Basic end to end Mirador', () => {
 
     // Click the added manifest item
     // eslint-disable-next-line testing-library/no-node-access
-    const listItem = document.querySelector(
-      '[data-manifestid="https://iiif.io/api/cookbook/recipe/0266-full-canvas-annotation/manifest.json"]',
-    );
+    const listItem = document.querySelector('[data-manifestid="__tests__/fixtures/version-3/0001-mvm-image.json"]');
     const button = await within(listItem).findByRole('button');
     fireEvent.click(button);
 
     // The viewer is loaded with the manifest
     const element = await screen.findByRole('heading', {
-      name: /Picture of Göttingen taken during the 2019 IIIF Conference/i,
+      name: /Single Image Example/i,
     });
     expect(element).toBeInTheDocument();
 
@@ -44,7 +42,7 @@ describe('Basic end to end Mirador', () => {
 
     expect(
       await screen.findByRole('heading', {
-        name: /Picture of Göttingen taken during the 2019 IIIF Conference/i,
+        name: /Single Image Example/i,
       }),
     ).toBeInTheDocument();
   });

@@ -1,4 +1,4 @@
-import { PRIMARY_CANVAS_FIXTURE_URL, PRIMARY_MANIFEST_FIXTURE_URL } from './constants';
+import { defaultMapViewerConfig } from '../../../src/components/MapViewer';
 import { poiPreviewPlugins } from '../../../src/plugins/poiPreviewPlugin.tsx';
 
 // Mirador.viewer(config, plugins) takes plugins as its own second argument - MiradorViewer
@@ -6,8 +6,11 @@ import { poiPreviewPlugins } from '../../../src/plugins/poiPreviewPlugin.tsx';
 // inside `config` - so this is exported separately for demo/index.html to pass along.
 export const plugins = poiPreviewPlugins;
 
-// has 2 windows, one gaugin and one bodleian
+// Same manifest-in/map-out preset the MapViewer component wraps (see demo/map-viewer.html),
+// used here directly since demo/index.html predates that component and drives Mirador.viewer()
+// itself.
 export default {
+  ...defaultMapViewerConfig,
   catalog: [
     {
       manifestId: 'https://files.tetras-libre.fr/dev/dbf/mapnile.json',
@@ -15,31 +18,14 @@ export default {
   ],
   id: 'mirador',
   theme: {
+    ...defaultMapViewerConfig.theme,
+    // Upstream convention across these fixture configs to avoid animation-related
+    // flakiness; unrelated to the map preset itself, so it isn't part of it.
     transitions: {},
-    components: {
-      WindowTopBar: {
-        styleOverrides: {
-          root: {
-            display: 'none',
-          },
-        },
-      },
-    },
   },
   windows: [
     {
       manifestId: 'https://files.tetras-libre.fr/dev/dbf/mapnile.json',
     },
   ],
-  window: {
-    defaultSideBarPanel: 'annotations',
-    sideBarOpenByDefault: true,
-    highlightAllAnnotations: true,
-    panels: {
-      canvas: false,
-    },
-  },
-  workspaceControlPanel: {
-    enabled: false,
-  },
 };

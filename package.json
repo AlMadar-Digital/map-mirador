@@ -85,6 +85,7 @@
     "uuid": "^8.1.0 || ^9.0.0 || ^10.0.0 || ^11.0.0"
   },
   "devDependencies": {
+    "@ckeditor/ckeditor5-react": "~11.0.1",
     "@emotion/react": "^11.10.6",
     "@emotion/styled": "^11.10.6",
     "@eslint/compat": "^2.0.3",
@@ -100,6 +101,8 @@
     "@vitest/coverage-v8": "^4.1.2",
     "@vitest/ui": "^4.1.2",
     "chalk": "^5.3.0",
+    "ckeditor5": "~47.6.1",
+    "dbf-mirador": "file:.",
     "eslint": "^10.0.0",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-import": "^2.32.0",
@@ -125,7 +128,8 @@
     "vitest-fetch-mock": "^0.4.2"
   },
   "overrides": {
-    "brace-expansion@1": "^1.1.16"
+    "brace-expansion@1": "^1.1.16",
+    "dbf-mirador": "file:."
   },
   "peerDependencies": {
     "@emotion/react": "^11.10.6",

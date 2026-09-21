@@ -7,7 +7,11 @@ import {
   getCompanionWindows,
   getVisibleCanvases,
   updateCompanionWindow,
-} from 'dbf-mirador';
+  // Relative, not `from 'dbf-mirador'`: this file lives inside the dbf-mirador package
+  // itself (unlike its copy in the Strapi maps plugin, a real external consumer), and
+  // there's no self-referencing node_modules link or dist build for the package name to
+  // resolve against during local dev.
+} from '../index';
 
 // A "dumb" way to preview a POI/journey (issue #375): a Mirador companion window plugin,
 // registered alongside dbf-mirador-annotation-editor's own (see MiradorMaeViewer.tsx) via

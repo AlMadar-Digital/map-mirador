@@ -41,6 +41,7 @@ export * from './ManifestInfo';
 export * from './ManifestListItem';
 export * from './ManifestListItemError';
 export * from './ManifestRelatedLinks';
+export * from './MapViewer';
 export * from './MinimalWindow';
 export * from './MiradorMenuButton';
 export * from './MosaicRenderPreview';

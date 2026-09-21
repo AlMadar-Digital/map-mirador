@@ -4,6 +4,8 @@ import { setupIntersectionMocking } from 'react-intersection-observer/test-utils
 import i18next from 'i18next';
 import createFetchMock from 'vitest-fetch-mock';
 import en from './src/locales/en/translation.json';
+import localImageManifestFixture from './__tests__/fixtures/version-3/0001-mvm-image.json' with { type: 'json' };
+import localSvgAnnotationsFixture from './__tests__/fixtures/version-3/svg-annotations.json' with { type: 'json' };
 
 // vitest doesn't set a default
 window.origin = 'http://localhost';
@@ -15,14 +17,45 @@ window['__@hello-pangea/dnd-disable-dev-warnings'] = true;
 
 vi.setConfig({ testTimeout: 10_000 });
 const fetchMocker = createFetchMock(vi);
+const localIntegrationFixtures = new Map([
+  [
+    '/__tests__/fixtures/version-3/0001-mvm-image.json',
+    JSON.stringify({
+      ...localImageManifestFixture,
+      items: localImageManifestFixture.items.map((item) => ({
+        ...item,
+        annotations: item.annotations?.map((annotationPage) => ({
+          ...annotationPage,
+          id: '/__tests__/fixtures/version-3/svg-annotations.json',
+        })),
+      })),
+    }),
+  ],
+  ['/__tests__/fixtures/version-3/svg-annotations.json', JSON.stringify(localSvgAnnotationsFixture)],
+]);
 
 // changes default behavior of fetchMock to use the real 'fetch' implementation and not mock responses
 beforeEach((context) => {
   if (context.task.file.name.includes('/integration')) {
-    fetchMocker.disableMocks();
+    fetchMocker.enableMocks();
+    fetchMocker.dontMock();
+    fetchMocker.mockIf(
+      (request) => {
+        const { pathname } = new URL(request.url);
+        return localIntegrationFixtures.has(pathname);
+      },
+      (request) => {
+        const { pathname } = new URL(request.url);
+        return {
+          body: localIntegrationFixtures.get(pathname),
+          headers: { 'Content-Type': 'application/json' },
+        };
+      },
+    );
   } else {
     // sets globalThis.fetch and globalThis.fetchMock to our mocked version
     fetchMocker.enableMocks();
+    fetchMocker.doMock();
   }
 });
 

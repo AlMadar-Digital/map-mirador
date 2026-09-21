@@ -1,2 +1,2 @@
-export const PRIMARY_MANIFEST_FIXTURE_URL = 'https://dms-data.stanford.edu/data/manifests/Parker/nb647fd0133/manifest.json';
-export const PRIMARY_CANVAS_FIXTURE_URL = 'https://dms-data.stanford.edu/data/manifests/Parker/nb647fd0133/canvas/canvas-1';
+export const PRIMARY_MANIFEST_FIXTURE_URL = '__tests__/fixtures/version-3/0001-mvm-image.json';
+export const PRIMARY_CANVAS_FIXTURE_URL = 'https://iiif.io/api/cookbook/recipe/0001-mvm-image/canvas/p1';

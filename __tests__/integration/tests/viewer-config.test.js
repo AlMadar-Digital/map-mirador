@@ -10,7 +10,7 @@ describe('initialViewerConfig', () => {
     it('allows initialViewerConfig to be passed', async (context) => {
       expect(
         await screen.findByRole('region', {
-          name: /Window: Cambridge, Corpus Christi College, MS 640: Antiphoner Leaf/i,
+          name: /Window: Single Image Example/i,
         }),
       ).toBeInTheDocument();
 

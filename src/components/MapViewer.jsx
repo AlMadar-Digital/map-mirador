@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef } from 'react';
 import PropTypes from 'prop-types';
 import { viewer } from '../init';
+import { updateConfig } from '../state/actions/config';
 import { poiPreviewPlugins } from '../plugins/poiPreviewPlugin.tsx';
 
 // Hides Mirador's generic multi-window IIIF-viewer chrome (top bar, workspace controls,
@@ -69,14 +70,25 @@ export const defaultMapViewerConfig = {
   },
 };
 
+/** Languages a map's content (and so its viewer) is authored in. */
+export const MAP_VIEWER_LANGUAGES = ['en', 'ar'];
+
 /**
  * Drop-in map renderer: give it a IIIF manifest URL, get Mirador pre-configured to look
  * and behave like a map instead of a generic multi-window viewer. Wraps `viewer()` so
  * callers don't need to know Mirador's own instantiation/config API.
+ *
+ * `lang` drives both Mirador's own UI (labels, and right-to-left layout for Arabic) and the
+ * POI/journey previews, which show only that language's content.
  */
-export function MapViewer({ manifestId }) {
+export function MapViewer({ lang = 'en', manifestId }) {
   const baseId = useId().replace(/:/g, '');
   const wrapperRef = useRef(null);
+  const instanceRef = useRef(null);
+  // Read when the viewer is (re)created, so a `lang` change alone doesn't rebuild it - the
+  // effect below switches the running viewer's language instead, keeping the map's viewport.
+  const langRef = useRef(lang);
+  langRef.current = lang;
 
   useEffect(() => {
     const wrapper = wrapperRef.current;
@@ -92,21 +104,33 @@ export function MapViewer({ manifestId }) {
       {
         ...defaultMapViewerConfig,
         id: container.id,
+        language: langRef.current,
         windows: [{ manifestId }],
       },
       poiPreviewPlugins,
     );
+    instanceRef.current = instance;
 
     return () => {
+      instanceRef.current = null;
       instance.unmount();
       container.remove();
     };
   }, [baseId, manifestId]);
 
-  return <div ref={wrapperRef} style={{ height: '100%', position: 'relative', width: '100%' }} />;
+  useEffect(() => {
+    const store = instanceRef.current?.store;
+    if (store && store.getState().config.language !== lang) {
+      store.dispatch(updateConfig({ language: lang }));
+    }
+  }, [lang]);
+
+  return <div lang={lang} ref={wrapperRef} style={{ height: '100%', position: 'relative', width: '100%' }} />;
 }
 
 MapViewer.propTypes = {
+  /** Language of the viewer's UI and of the POI/journey content it previews. */
+  lang: PropTypes.oneOf(MAP_VIEWER_LANGUAGES),
   /** URL of the IIIF manifest to render as a map. */
   manifestId: PropTypes.string.isRequired,
 };

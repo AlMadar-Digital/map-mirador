@@ -20,9 +20,14 @@
     import { createRoot } from 'react-dom/client';
     import { MapViewer } from '../src';
 
-    // This is the whole integration surface: a manifest URL in, a preconfigured map out.
+    // This is the whole integration surface: a manifest URL (and a language) in, a
+    // preconfigured map out. Try `?lang=ar` for the Arabic, right-to-left viewer.
+    const lang = new URLSearchParams(window.location.search).get('lang') === 'ar' ? 'ar' : 'en';
+    document.documentElement.lang = lang;
+
     createRoot(document.getElementById('root')).render(
       createElement(MapViewer, {
+        lang,
         manifestId: 'https://files.tetras-libre.fr/dev/dbf/mapnile.json',
       })
     );

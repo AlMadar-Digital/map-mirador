@@ -1,4 +1,4 @@
-import { useEffect, useState, type ComponentType } from 'react';
+import { useEffect, type ComponentType } from 'react';
 import useMediaQuery from '@mui/material/useMediaQuery';
 import { useTheme } from '@mui/material/styles';
 import OpenSeadragon from 'openseadragon';
@@ -10,6 +10,7 @@ import {
   getAnnotations,
   getCompanionWindow,
   getCompanionWindows,
+  getConfig,
   getSelectedAnnotationId,
   getVisibleCanvases,
   selectAnnotation,
@@ -29,9 +30,8 @@ import {
 // specific row's id as `annotationid`, the same convention MAE's own 'annotationCreation'
 // companion window already uses for its own Edit button.
 //
-// Journeys (issue #378) get a richer path here: instead of the "dumb" dual-locale dump
-// below, a Journey renders its ordered stops as numbered cards with a single active
-// locale (toggle EN/AR), closer to how the public site will eventually present it. Two
+// Journeys (issue #378) get a richer path here: a Journey renders its ordered stops as
+// numbered cards, closer to how the public site will eventually present it. Two
 // pieces of the Figma design are intentionally NOT built here, per the issue author's own
 // follow-up comment saying they "wait more precision": numbered pins drawn on the map
 // canvas itself, and an SVG line joining those pins in journey order.
@@ -70,10 +70,34 @@ type RawAnnotation = {
   target?: unknown;
 };
 
-// Both locales, side by side - see the module comment above: the point of a "dumb" preview
-// is to see everything a poi/journey holds, not to render it the way the public site
-// eventually will for one active language.
-const LOCALES = ['en', 'ar'] as const;
+// Content is authored in English and Arabic only. The preview shows the one matching
+// Mirador's own UI language (`config.language`, which MapViewer's `lang` prop sets), so a
+// map and its previews always speak the same language - Arabic for any `ar*` language,
+// English otherwise.
+export type ContentLocale = 'en' | 'ar';
+export const getContentLocale = (language?: string | null): ContentLocale =>
+  (language ?? '').split('-')[0].toLowerCase() === 'ar' ? 'ar' : 'en';
+
+// The preview's own UI strings - a local table rather than Mirador's i18n resources, since
+// only the two content locales ever reach this plugin.
+const LABELS: Record<ContentLocale, Record<string, string>> = {
+  ar: {
+    Journey: 'رحلة',
+    POI: 'نقطة اهتمام',
+    noStops: 'لا توجد محطات في هذه الرحلة بعد.',
+    notFound: 'تعذر العثور على هذا العنصر - ربما تم حذفه.',
+    preview: 'معاينة',
+    showOnMap: 'عرض على الخريطة',
+  },
+  en: {
+    Journey: 'Journey',
+    POI: 'POI',
+    noStops: 'This journey has no stops yet.',
+    notFound: 'This annotation could not be found - it may have been deleted.',
+    preview: 'Preview',
+    showOnMap: 'Show on map',
+  },
+};
 
 const textBody = (
   annotation: RawAnnotation,
@@ -85,7 +109,7 @@ const textBody = (
       item.type === 'TextualBody' && item.purpose === purpose && item.language === language
   )?.value ?? '';
 
-const mediaForLocale = (annotation: RawAnnotation, locale: (typeof LOCALES)[number]): DbfMedia | null | undefined =>
+const mediaForLocale = (annotation: RawAnnotation, locale: ContentLocale): DbfMedia | null | undefined =>
   locale === 'en' ? annotation['dbf:mediaEn'] : annotation['dbf:mediaAr'];
 
 // A journey's ordered stops, derived the same way the rest of the codebase does: every
@@ -162,16 +186,12 @@ export const fitMapToPoints = (windowId: string, points: Point[]) => {
   );
 };
 
-const JOURNEY_PREVIEW_LOCALES = ['en', 'ar'] as const;
-type JourneyPreviewLocale = (typeof JOURNEY_PREVIEW_LOCALES)[number];
-
-// Arabic is the only RTL locale this project handles today (mirrors the same check in
-// mirador-annotation-editor's POITemplate.jsx/JourneyTemplate.jsx).
-const isRtlLocale = (locale: string) => locale.toLowerCase().startsWith('ar');
+const localeDir = (locale: ContentLocale) => (locale === 'ar' ? 'rtl' : 'ltr');
 
 interface JourneyPreviewContentProps {
   id: string;
   journey: RawAnnotation;
+  locale: ContentLocale;
   pois: RawAnnotation[];
   selectAnnotation: typeof selectAnnotation;
   selectedAnnotationId?: string;
@@ -181,12 +201,13 @@ interface JourneyPreviewContentProps {
 const JourneyPreviewContent = ({
   id,
   journey,
+  locale,
   pois,
   selectAnnotation: dispatchSelectAnnotation,
   selectedAnnotationId,
   windowId,
 }: JourneyPreviewContentProps) => {
-  const [locale, setLocale] = useState<JourneyPreviewLocale>('en');
+  const labels = LABELS[locale];
   const journeyTitle = textBody(journey, locale, 'identifying');
 
   // `pois` is a fresh array on every store update, so the fit below is keyed on the stops'
@@ -206,29 +227,9 @@ const JourneyPreviewContent = ({
   };
 
   return (
-    <CompanionWindow id={id} title={journeyTitle || 'Journey'} windowId={windowId}>
-      <div dir={isRtlLocale(locale) ? 'rtl' : 'ltr'} style={{ padding: 16 }}>
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 4, marginBottom: 16 }}>
-          {JOURNEY_PREVIEW_LOCALES.map((code) => (
-            <button
-              aria-pressed={locale === code}
-              key={code}
-              onClick={() => setLocale(code)}
-              style={{
-                background: locale === code ? '#333' : 'transparent',
-                border: '1px solid #333',
-                borderRadius: 4,
-                color: locale === code ? '#fff' : '#333',
-                cursor: 'pointer',
-                padding: '4px 12px',
-              }}
-              type="button"
-            >
-              {code.toUpperCase()}
-            </button>
-          ))}
-        </div>
-        {pois.length === 0 && <p>This journey has no stops yet.</p>}
+    <CompanionWindow id={id} title={journeyTitle || labels.Journey} windowId={windowId}>
+      <div dir={localeDir(locale)} lang={locale} style={{ padding: 16 }}>
+        {pois.length === 0 && <p>{labels.noStops}</p>}
         {pois.map((poi, index) => {
           const poiTitle = textBody(poi, locale, 'identifying');
           const description = textBody(poi, locale, 'describing');
@@ -257,7 +258,7 @@ const JourneyPreviewContent = ({
                 paddingTop: 8,
               }}
               tabIndex={0}
-              title="Show on map"
+              title={labels.showOnMap}
             >
               <div
                 style={{
@@ -312,48 +313,44 @@ const JourneyPreviewContent = ({
 interface PoiPreviewContentProps {
   annotation: RawAnnotation | null;
   id: string;
+  locale: ContentLocale;
   windowId: string;
 }
 
-const PoiPreviewContent = ({ annotation, id, windowId }: PoiPreviewContentProps) => (
-  <CompanionWindow id={id} title={annotation?.['dbf:kind'] ?? 'Preview'} windowId={windowId}>
-    <div style={{ padding: 16 }}>
-      {!annotation && <p>This annotation could not be found - it may have been deleted.</p>}
-      {annotation &&
-        LOCALES.map((locale) => {
-          const title = textBody(annotation, locale, 'identifying');
-          const description = textBody(annotation, locale, 'describing');
-          const media = mediaForLocale(annotation, locale);
-          return (
-            <section key={locale} style={{ marginBottom: 24 }}>
-              <h3 style={{ textTransform: 'uppercase' }}>{locale}</h3>
-              <p>
-                <strong>{title || '—'}</strong>
-              </p>
-              {description && (
-                // eslint-disable-next-line react/no-danger -- descriptionEn/Ar is CKEditor HTML, the same content the public site will eventually render
-                <div dangerouslySetInnerHTML={{ __html: description }} />
-              )}
-              {media &&
-                (media.thumbnailUrl ? (
-                  <img alt={media.title ?? ''} src={media.thumbnailUrl} style={{ maxWidth: '100%' }} />
-                ) : (
-                  <p>
-                    {media.title}
-                    {media.mediaType ? ` (${media.mediaType})` : ''}
-                  </p>
-                ))}
-            </section>
-          );
-        })}
-    </div>
-  </CompanionWindow>
-);
+const PoiPreviewContent = ({ annotation, id, locale, windowId }: PoiPreviewContentProps) => {
+  const labels = LABELS[locale];
+  const kind = annotation?.['dbf:kind'];
+  const title = annotation ? textBody(annotation, locale, 'identifying') : '';
+  const description = annotation ? textBody(annotation, locale, 'describing') : '';
+  const media = annotation ? mediaForLocale(annotation, locale) : null;
+
+  return (
+    <CompanionWindow id={id} title={title || (kind && labels[kind]) || labels.preview} windowId={windowId}>
+      <div dir={localeDir(locale)} lang={locale} style={{ padding: 16 }}>
+        {!annotation && <p>{labels.notFound}</p>}
+        {description && (
+          // eslint-disable-next-line react/no-danger -- descriptionEn/Ar is CKEditor HTML, the same content the public site will eventually render
+          <div dangerouslySetInnerHTML={{ __html: description }} />
+        )}
+        {media &&
+          (media.thumbnailUrl ? (
+            <img alt={media.title ?? ''} src={media.thumbnailUrl} style={{ maxWidth: '100%' }} />
+          ) : (
+            <p>
+              {media.title}
+              {media.mediaType ? ` (${media.mediaType})` : ''}
+            </p>
+          ))}
+      </div>
+    </CompanionWindow>
+  );
+};
 
 interface PreviewContentProps {
   annotation: RawAnnotation | null;
   id: string;
   journeyPois: RawAnnotation[];
+  locale: ContentLocale;
   selectAnnotation: typeof selectAnnotation;
   selectedAnnotationId?: string;
   windowId: string;
@@ -363,6 +360,7 @@ const PreviewContent = ({
   annotation,
   id,
   journeyPois,
+  locale,
   selectAnnotation: dispatchSelectAnnotation,
   selectedAnnotationId,
   windowId,
@@ -372,6 +370,7 @@ const PreviewContent = ({
       <JourneyPreviewContent
         id={id}
         journey={annotation}
+        locale={locale}
         pois={journeyPois}
         selectAnnotation={dispatchSelectAnnotation}
         selectedAnnotationId={selectedAnnotationId}
@@ -379,7 +378,7 @@ const PreviewContent = ({
       />
     );
   }
-  return <PoiPreviewContent annotation={annotation} id={id} windowId={windowId} />;
+  return <PoiPreviewContent annotation={annotation} id={id} locale={locale} windowId={windowId} />;
 };
 
 const poiPreviewCompanionWindowPlugin = {
@@ -401,6 +400,7 @@ const poiPreviewCompanionWindowPlugin = {
       annotation,
       journeyPois:
         annotation && annotation['dbf:kind'] === 'Journey' ? getOrderedJourneyPois(items, annotation.id) : [],
+      locale: getContentLocale((getConfig(state) as { language?: string }).language),
       selectedAnnotationId: getSelectedAnnotationId(state, { windowId }) as string | undefined,
     };
   },

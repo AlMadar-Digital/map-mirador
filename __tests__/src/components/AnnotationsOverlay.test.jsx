@@ -3,7 +3,7 @@ import { render, screen } from '@tests/utils/test-utils';
 import OpenSeadragon from 'openseadragon';
 import { Utils } from 'manifesto.js';
 import { getCanvasWorld } from '../../utils/mirador-wrappers';
-import { AnnotationsOverlay } from '../../../src/components/AnnotationsOverlay';
+import { AnnotationsOverlay, journeyStopNumbers } from '../../../src/components/AnnotationsOverlay';
 import OpenSeadragonCanvasOverlay from '../../../src/lib/OpenSeadragonCanvasOverlay';
 import AnnotationList from '../../../src/lib/AnnotationList';
 import AnnotationPage from '../../../src/lib/AnnotationPage';
@@ -457,5 +457,19 @@ describe('AnnotationsOverlay', () => {
 
       vi.useRealTimers();
     });
+  });
+});
+
+describe('journeyStopNumbers', () => {
+  it("numbers each journey's POIs from 1, in dbf:journey.order order, ignoring gaps", () => {
+    const resources = [
+      { id: 'b', journeyId: 'j1', journeyOrder: 4 },
+      { id: 'lonePoi', journeyId: null, journeyOrder: null },
+      { id: 'a', journeyId: 'j1', journeyOrder: 0 },
+      { id: 'x', journeyId: 'j2', journeyOrder: 2 },
+      { id: 'c', journeyId: 'j1', journeyOrder: 9 },
+    ];
+
+    expect(Object.fromEntries(journeyStopNumbers(resources))).toEqual({ a: 1, b: 2, c: 3, x: 1 });
   });
 });

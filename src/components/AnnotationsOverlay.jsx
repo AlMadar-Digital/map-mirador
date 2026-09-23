@@ -2,6 +2,7 @@ import { useRef, useEffect, useCallback, useMemo } from 'react';
 import ReactDOM from 'react-dom';
 import PropTypes from 'prop-types';
 import { useDebouncedCallback } from 'use-debounce';
+import groupBy from 'lodash/groupBy';
 import partition from 'lodash/partition';
 import sortBy from 'lodash/sortBy';
 import xor from 'lodash/xor';
@@ -58,6 +59,27 @@ function isIgnoredGesture(event) {
 }
 
 /**
+ * The 1-based stop number of every journey POI among `resources`, by resource id: its rank
+ * within its journey ordered by `dbf:journey.order` - the same numbering as the journey preview's
+ * stop list. Ranking rather than showing the stored order directly, since that order is 0-based
+ * and can have gaps (e.g. after a stop is removed).
+ * @private
+ */
+export function journeyStopNumbers(resources) {
+  const stopNumbers = new Map();
+  const poisByJourney = Object.values(
+    groupBy(
+      resources.filter((resource) => resource.journeyId != null),
+      (resource) => resource.journeyId,
+    ),
+  );
+  poisByJourney.forEach((pois) => {
+    sortBy(pois, (poi) => poi.journeyOrder).forEach((poi, index) => stopNumbers.set(poi.id, index + 1));
+  });
+  return stopNumbers;
+}
+
+/**
  * Represents a OpenSeadragonViewer in the mirador workspace. Responsible for mounting
  * and rendering OSD.
  */
@@ -104,9 +126,13 @@ export function AnnotationsOverlay({
       // notably including a Journey's own annotation target (an svg/fragment selector, not a
       // pointSelector), which would otherwise draw in plain store order and can end up covering
       // - and stealing clicks from - a POI pin it happens to overlap on screen.
+      // The selected pin draws last of all, so its bigger highlighted icon is never hidden under
+      // a neighbouring pin.
       const [otherResources, poiResources] = partition(resources, (resource) => !resource.pointSelector);
+      const [otherPois, selectedPois] = partition(poiResources, (resource) => resource.id !== selectedAnnotationId);
+      const stopNumbers = journeyStopNumbers(poiResources);
 
-      [...otherResources, ...poiResources].forEach((resource) => {
+      [...otherResources, ...otherPois, ...selectedPois].forEach((resource) => {
         const osdCanvasIndex = canvasWorld.canvases.findIndex((canvas) => canvas.id === resource.targetId);
         if (osdCanvasIndex === -1) return;
         const viewportCanvas = viewer.world.getItemAt(osdCanvasIndex);
@@ -115,6 +141,7 @@ export function AnnotationsOverlay({
         const zoomRatio = viewportCanvas.viewportToImageZoom(viewer.viewport.getZoom(true));
         const canvasAnnotationDisplay = new CanvasAnnotationDisplay({
           hovered: hoveredAnnotationIds.includes(resource.id),
+          journeyStopNumber: stopNumbers.get(resource.id),
           offset,
           palette: {
             ...currentPalette,

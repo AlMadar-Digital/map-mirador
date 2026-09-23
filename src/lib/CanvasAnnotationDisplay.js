@@ -22,7 +22,7 @@ const POI_ICON_HEAD_FONT_SCALE = 1.6;
 const POI_ICON_DEFAULT_FILL = '#1e88e5';
 /** How much bigger a selected POI's icon is drawn than the others, so it stands out on the map. */
 export const POI_ICON_SELECTED_SCALE = 1.3;
-/** Outline drawn around a selected POI's icon (and color of its journey stop number), keeping a light selection color - Mirador's default is yellow - readable on any map. */
+/** Outline drawn around a selected POI's icon, setting it apart from the other pins. */
 const POI_ICON_SELECTED_OUTLINE = '#212121';
 /** Constant on-screen height (CSS px) for the POI icon, regardless of zoom - counter-scaled the same way this class already counter-scales stroke width (see `lineWidth /= zoomRatio` in svgContext). */
 export const POI_ICON_HEIGHT_PX = 44;
@@ -90,8 +90,8 @@ export default class CanvasAnnotationDisplay {
    * journey, also draws its (1-based) stop number in a badge over the icon's head, so its
    * position within the journey is visible directly on the map.
    *
-   * A hovered or selected POI takes that palette's color; a selected one is also drawn bigger
-   * and outlined, so the POI currently selected (from the map or a list) stands out.
+   * The POI currently selected (from the map or a list) is drawn bigger and outlined, keeping
+   * the POI blue, so it stands out.
    */
   pointContext() {
     const { x, y } = this.resource.pointSelector;
@@ -102,7 +102,7 @@ export default class CanvasAnnotationDisplay {
     const iconHeight = (POI_ICON_HEIGHT_PX * sizeScale) / this.zoomRatio;
     const iconScale = iconHeight / POI_ICON_VIEWBOX_SIZE;
     const iconPath = new Path2D(POI_ICON_PATH_D);
-    const fill = this.poiFill(currentPalette);
+    const fill = this.poiFill();
 
     this.context.save();
     this.context.translate(this.offset.x + x, this.offset.y + y);
@@ -122,21 +122,18 @@ export default class CanvasAnnotationDisplay {
 
     const stopNumber = this.journeyStopNumberToDisplay();
     if (stopNumber != null) {
-      this.journeyOrderBadgeContext(stopNumber, this.selected ? POI_ICON_SELECTED_OUTLINE : fill);
+      this.journeyOrderBadgeContext(stopNumber, fill);
     }
 
     this.context.restore();
   }
 
   /**
-   * The POI icon's fill color: the palette's own color when hovered or selected (Mirador's
-   * annotation palettes only set a strokeStyle for those states), the POI blue otherwise.
+   * The POI icon's fill color: the POI blue in every state - a selected POI stands out by its
+   * size and outline rather than by Mirador's selection color (yellow by default).
    */
-  poiFill(currentPalette) {
-    if (this.hovered || this.selected) {
-      return currentPalette.fillStyle || currentPalette.strokeStyle || POI_ICON_DEFAULT_FILL;
-    }
-    return currentPalette.fillStyle || POI_ICON_DEFAULT_FILL;
+  poiFill() {
+    return this.palette.default?.fillStyle || POI_ICON_DEFAULT_FILL;
   }
 
   /**

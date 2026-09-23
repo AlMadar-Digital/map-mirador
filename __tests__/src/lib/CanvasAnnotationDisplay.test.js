@@ -298,7 +298,7 @@ describe('CanvasAnnotationDisplay', () => {
       expect(context.stroke).not.toHaveBeenCalled();
     });
 
-    it('draws a selected pin bigger, outlined and in the selected palette color', () => {
+    it('draws a selected pin bigger and outlined, keeping the POI blue', () => {
       const context = createMockContext();
       const subject = createSubject({ resource: createPointResource(), selected: true, zoomRatio: 0.5 });
       subject.context = context;
@@ -308,17 +308,17 @@ describe('CanvasAnnotationDisplay', () => {
       const [scaleX, scaleY] = context.scale.mock.calls[0];
       expect(scaleX).toBeCloseTo(1.144);
       expect(scaleY).toBeCloseTo(1.144);
-      expect(context.fillStyle).toBe('yellow');
+      expect(context.fillStyle).toBe('#1e88e5');
       expect(context.stroke).toHaveBeenCalled();
     });
 
-    it('draws a hovered pin in the hovered palette color', () => {
+    it('keeps a hovered pin in the POI blue rather than the hovered palette color', () => {
       const context = createMockContext();
       const subject = createSubject({ hovered: true, resource: createPointResource() });
       subject.context = context;
       subject.pointContext();
 
-      expect(context.fillStyle).toBe('blue');
+      expect(context.fillStyle).toBe('#1e88e5');
     });
   });
 

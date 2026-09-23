@@ -1,13 +1,18 @@
-import { useState, type ComponentType } from 'react';
+import { useEffect, useState, type ComponentType } from 'react';
 import useMediaQuery from '@mui/material/useMediaQuery';
 import { useTheme } from '@mui/material/styles';
+import OpenSeadragon from 'openseadragon';
 import {
+  AnnotationItem,
   ConnectedCompanionWindow as CompanionWindow,
+  OSDReferences,
   addCompanionWindow,
   getAnnotations,
   getCompanionWindow,
   getCompanionWindows,
+  getSelectedAnnotationId,
   getVisibleCanvases,
+  selectAnnotation,
   updateCompanionWindow,
   // Relative, not `from 'dbf-mirador'`: this file lives inside the dbf-mirador package
   // itself (unlike its copy in the Strapi maps plugin, a real external consumer), and
@@ -62,6 +67,7 @@ type RawAnnotation = {
   // isn't part of that package's public API - so the same filter+sort is redone below).
   'dbf:journey'?: { id: string; order: number } | null;
   body?: TextualAnnotationBody[];
+  target?: unknown;
 };
 
 // Both locales, side by side - see the module comment above: the point of a "dumb" preview
@@ -92,6 +98,70 @@ export const getOrderedJourneyPois = (items: RawAnnotation[], journeyId: string)
     )
     .sort((a, b) => a['dbf:journey'].order - b['dbf:journey'].order);
 
+// A POI's pin position, in canvas coordinates - the same PointSelector AnnotationsOverlay
+// draws the pin from. The map viewer shows a single canvas, so canvas coordinates are also
+// OpenSeadragon's viewport coordinates (a multi-canvas layout would need CanvasWorld's offset).
+type Point = { x: number; y: number };
+export const getPoiPoint = (poi: RawAnnotation): Point | null => {
+  // AnnotationItem#pointSelector throws on a target-less annotation (its selector is `null`)
+  if (!poi.target) return null;
+  const selector = new AnnotationItem(poi).pointSelector as Partial<Point> | null | undefined;
+  if (typeof selector?.x !== 'number' || typeof selector?.y !== 'number') return null;
+  return { x: selector.x, y: selector.y };
+};
+
+// How far "focus on this stop" zooms in, relative to the whole-map (home) zoom - a ratio
+// rather than an absolute zoom, since Mirador's viewport is in canvas pixels so absolute
+// zoom levels differ from one map to another.
+const POI_FOCUS_ZOOM_RATIO = 4;
+// Margin kept around a journey's stops when fitting them all in view, as a fraction of the
+// stops' own bounding box (with a floor for journeys whose stops are almost on top of each other).
+const JOURNEY_FIT_PADDING_RATIO = 0.2;
+
+const getOsdViewer = (windowId: string) =>
+  OSDReferences.get(windowId)?.current ?? null;
+
+// Pans the main map onto a point, zooming in if the map is further out than the focus zoom
+// (but never zooming out a user who is already closer in).
+export const focusMapOnPoint = (windowId: string, point: Point) => {
+  const viewport = getOsdViewer(windowId)?.viewport;
+  if (!viewport) return;
+
+  const center = new OpenSeadragon.Point(point.x, point.y);
+  const zoom = Math.min(
+    viewport.getMaxZoom(),
+    Math.max(viewport.getZoom(), viewport.getHomeZoom() * POI_FOCUS_ZOOM_RATIO)
+  );
+  viewport.panTo(center);
+  viewport.zoomTo(zoom, center);
+};
+
+// Fits every stop of a journey in view at once.
+export const fitMapToPoints = (windowId: string, points: Point[]) => {
+  if (points.length === 0) return;
+  if (points.length === 1) {
+    focusMapOnPoint(windowId, points[0]);
+    return;
+  }
+
+  const viewport = getOsdViewer(windowId)?.viewport;
+  if (!viewport) return;
+
+  const xs = points.map(({ x }) => x);
+  const ys = points.map(({ y }) => y);
+  const minX = Math.min(...xs);
+  const minY = Math.min(...ys);
+  const width = Math.max(...xs) - minX;
+  const height = Math.max(...ys) - minY;
+  const home = viewport.getHomeBounds();
+  const padX = Math.max(width * JOURNEY_FIT_PADDING_RATIO, home.width * 0.05);
+  const padY = Math.max(height * JOURNEY_FIT_PADDING_RATIO, home.height * 0.05);
+
+  viewport.fitBoundsWithConstraints(
+    new OpenSeadragon.Rect(minX - padX, minY - padY, width + 2 * padX, height + 2 * padY)
+  );
+};
+
 const JOURNEY_PREVIEW_LOCALES = ['en', 'ar'] as const;
 type JourneyPreviewLocale = (typeof JOURNEY_PREVIEW_LOCALES)[number];
 
@@ -103,12 +173,37 @@ interface JourneyPreviewContentProps {
   id: string;
   journey: RawAnnotation;
   pois: RawAnnotation[];
+  selectAnnotation: typeof selectAnnotation;
+  selectedAnnotationId?: string;
   windowId: string;
 }
 
-const JourneyPreviewContent = ({ id, journey, pois, windowId }: JourneyPreviewContentProps) => {
+const JourneyPreviewContent = ({
+  id,
+  journey,
+  pois,
+  selectAnnotation: dispatchSelectAnnotation,
+  selectedAnnotationId,
+  windowId,
+}: JourneyPreviewContentProps) => {
   const [locale, setLocale] = useState<JourneyPreviewLocale>('en');
   const journeyTitle = textBody(journey, locale, 'identifying');
+
+  // `pois` is a fresh array on every store update, so the fit below is keyed on the stops'
+  // actual positions instead - it only re-runs when another journey is previewed or a stop moves.
+  const points = pois.map(getPoiPoint).filter((point): point is Point => point !== null);
+  const pointsKey = points.map(({ x, y }) => `${x},${y}`).join(';');
+  useEffect(() => {
+    fitMapToPoints(windowId, points);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `points` is captured by `pointsKey`
+  }, [journey.id, pointsKey, windowId]);
+
+  const focusPoi = (poi: RawAnnotation) => {
+    const point = getPoiPoint(poi);
+    if (point) focusMapOnPoint(windowId, point);
+    // Selecting it also highlights the pin on the map, like clicking the pin itself would.
+    dispatchSelectAnnotation(windowId, poi.id);
+  };
 
   return (
     <CompanionWindow id={id} title={journeyTitle || 'Journey'} windowId={windowId}>
@@ -139,8 +234,31 @@ const JourneyPreviewContent = ({ id, journey, pois, windowId }: JourneyPreviewCo
           const description = textBody(poi, locale, 'describing');
           const media = mediaForLocale(poi, locale);
           const isLast = index === pois.length - 1;
+          const isSelected = poi.id === selectedAnnotationId;
           return (
-            <div key={poi.id} style={{ display: 'flex' }}>
+            <div
+              aria-current={isSelected || undefined}
+              key={poi.id}
+              onClick={() => focusPoi(poi)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault();
+                  focusPoi(poi);
+                }
+              }}
+              role="button"
+              style={{
+                background: isSelected ? 'rgba(0, 0, 0, 0.06)' : undefined,
+                borderRadius: 8,
+                cursor: 'pointer',
+                display: 'flex',
+                marginInline: -8,
+                paddingInline: 8,
+                paddingTop: 8,
+              }}
+              tabIndex={0}
+              title="Show on map"
+            >
               <div
                 style={{
                   alignItems: 'center',
@@ -236,12 +354,30 @@ interface PreviewContentProps {
   annotation: RawAnnotation | null;
   id: string;
   journeyPois: RawAnnotation[];
+  selectAnnotation: typeof selectAnnotation;
+  selectedAnnotationId?: string;
   windowId: string;
 }
 
-const PreviewContent = ({ annotation, id, journeyPois, windowId }: PreviewContentProps) => {
+const PreviewContent = ({
+  annotation,
+  id,
+  journeyPois,
+  selectAnnotation: dispatchSelectAnnotation,
+  selectedAnnotationId,
+  windowId,
+}: PreviewContentProps) => {
   if (annotation && annotation['dbf:kind'] === 'Journey') {
-    return <JourneyPreviewContent id={id} journey={annotation} pois={journeyPois} windowId={windowId} />;
+    return (
+      <JourneyPreviewContent
+        id={id}
+        journey={annotation}
+        pois={journeyPois}
+        selectAnnotation={dispatchSelectAnnotation}
+        selectedAnnotationId={selectedAnnotationId}
+        windowId={windowId}
+      />
+    );
   }
   return <PoiPreviewContent annotation={annotation} id={id} windowId={windowId} />;
 };
@@ -265,8 +401,10 @@ const poiPreviewCompanionWindowPlugin = {
       annotation,
       journeyPois:
         annotation && annotation['dbf:kind'] === 'Journey' ? getOrderedJourneyPois(items, annotation.id) : [],
+      selectedAnnotationId: getSelectedAnnotationId(state, { windowId }) as string | undefined,
     };
   },
+  mapDispatchToProps: { selectAnnotation },
 };
 
 // A canvas annotation resource, as AnnotationsOverlay's own `annotations`/`searchAnnotations`

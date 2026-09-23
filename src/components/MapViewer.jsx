@@ -3,6 +3,7 @@ import PropTypes from 'prop-types';
 import { viewer } from '../init';
 import { updateConfig } from '../state/actions/config';
 import { poiPreviewPlugins } from '../plugins/poiPreviewPlugin.tsx';
+import { nestedMapPlugins } from '../plugins/nestedMapPlugin.tsx';
 
 // Hides Mirador's generic multi-window IIIF-viewer chrome (top bar, workspace controls,
 // canvas panel) so a manifest reads as a single interactive map rather than a document
@@ -80,11 +81,19 @@ export const MAP_VIEWER_LANGUAGES = ['en', 'ar'];
  *
  * `lang` drives both Mirador's own UI (labels, and right-to-left layout for Arabic) and the
  * POI/journey previews, which show only that language's content.
+ *
+ * `getLinkedMapManifestId` turns a Nested Map point's linked map (`{ id }`, the map's Strapi
+ * documentId) into its manifest URL. When given, a Nested Map point's preview gets an "Open
+ * map" button, which shows the linked map in place of the current one with a "Back" button.
  */
-export function MapViewer({ lang = 'en', manifestId }) {
+export function MapViewer({ getLinkedMapManifestId = undefined, lang = 'en', manifestId }) {
   const baseId = useId().replace(/:/g, '');
   const wrapperRef = useRef(null);
   const instanceRef = useRef(null);
+  // Called through a ref, so a new resolver function on each render doesn't rebuild the viewer.
+  const getLinkedMapManifestIdRef = useRef(getLinkedMapManifestId);
+  getLinkedMapManifestIdRef.current = getLinkedMapManifestId;
+  const hasLinkedMapResolver = !!getLinkedMapManifestId;
   // Read when the viewer is (re)created, so a `lang` change alone doesn't rebuild it - the
   // effect below switches the running viewer's language instead, keeping the map's viewport.
   const langRef = useRef(lang);
@@ -105,9 +114,14 @@ export function MapViewer({ lang = 'en', manifestId }) {
         ...defaultMapViewerConfig,
         id: container.id,
         language: langRef.current,
+        maps: {
+          getLinkedMapManifestId: hasLinkedMapResolver
+            ? (linkedMap) => getLinkedMapManifestIdRef.current?.(linkedMap)
+            : undefined,
+        },
         windows: [{ manifestId }],
       },
-      poiPreviewPlugins,
+      [...poiPreviewPlugins, ...nestedMapPlugins],
     );
     instanceRef.current = instance;
 
@@ -116,7 +130,7 @@ export function MapViewer({ lang = 'en', manifestId }) {
       instance.unmount();
       container.remove();
     };
-  }, [baseId, manifestId]);
+  }, [baseId, hasLinkedMapResolver, manifestId]);
 
   useEffect(() => {
     const store = instanceRef.current?.store;
@@ -129,6 +143,8 @@ export function MapViewer({ lang = 'en', manifestId }) {
 }
 
 MapViewer.propTypes = {
+  /** Resolves a Nested Map point's linked map (`{ id, titleEn }`) to its manifest URL - enables opening nested maps. */
+  getLinkedMapManifestId: PropTypes.func,
   /** Language of the viewer's UI and of the POI/journey content it previews. */
   lang: PropTypes.oneOf(MAP_VIEWER_LANGUAGES),
   /** URL of the IIIF manifest to render as a map. */

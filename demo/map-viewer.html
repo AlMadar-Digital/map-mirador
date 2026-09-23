@@ -25,8 +25,16 @@
     const lang = new URLSearchParams(window.location.search).get('lang') === 'ar' ? 'ar' : 'en';
     document.documentElement.lang = lang;
 
+    // Nested maps: the host turns a Nested Map point's linked map id into its manifest URL (the
+    // platform uses its Strapi manifest endpoint). The demo map's "Old City" point links to a map
+    // with no published manifest yet, so a public IIIF manifest stands in for it.
+    const DEMO_NESTED_MAP_MANIFESTS = {
+      ak1vrjnvgfygwwqc38hyf9sx: 'https://purl.stanford.edu/hg676jb4964/iiif/manifest',
+    };
+
     createRoot(document.getElementById('root')).render(
       createElement(MapViewer, {
+        getLinkedMapManifestId: ({ id }) => DEMO_NESTED_MAP_MANIFESTS[id],
         lang,
         manifestId: 'https://files.tetras-libre.fr/dev/dbf/mapnile.json',
       })

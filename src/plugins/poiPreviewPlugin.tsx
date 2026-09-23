@@ -1,4 +1,6 @@
 import { useEffect, type ComponentType } from 'react';
+import Button from '@mui/material/Button';
+import MapIcon from '@mui/icons-material/MapSharp';
 import useMediaQuery from '@mui/material/useMediaQuery';
 import { useTheme } from '@mui/material/styles';
 import OpenSeadragon from 'openseadragon';
@@ -20,6 +22,7 @@ import {
   // there's no self-referencing node_modules link or dist build for the package name to
   // resolve against during local dev.
 } from '../index';
+import { getLinkedMapManifestId, openNestedMap, type LinkedMap } from './nestedMapPlugin';
 
 // A "dumb" way to preview a POI/journey (issue #375): a Mirador companion window plugin,
 // registered alongside dbf-mirador-annotation-editor's own (see MiradorMaeViewer.tsx) via
@@ -66,6 +69,8 @@ type RawAnnotation = {
   // annotationListGrouping.js, which this plugin can't import directly since grouping
   // isn't part of that package's public API - so the same filter+sort is redone below).
   'dbf:journey'?: { id: string; order: number } | null;
+  // Set on a "Nested Map" point only: the map it opens (see nestedMapPlugin.tsx).
+  'dbf:linkedMap'?: LinkedMap | null;
   body?: TextualAnnotationBody[];
   target?: unknown;
 };
@@ -86,6 +91,7 @@ const LABELS: Record<ContentLocale, Record<string, string>> = {
     POI: 'نقطة اهتمام',
     noStops: 'لا توجد محطات في هذه الرحلة بعد.',
     notFound: 'تعذر العثور على هذا العنصر - ربما تم حذفه.',
+    openMap: 'فتح الخريطة',
     preview: 'معاينة',
     showOnMap: 'عرض على الخريطة',
   },
@@ -94,6 +100,7 @@ const LABELS: Record<ContentLocale, Record<string, string>> = {
     POI: 'POI',
     noStops: 'This journey has no stops yet.',
     notFound: 'This annotation could not be found - it may have been deleted.',
+    openMap: 'Open map',
     preview: 'Preview',
     showOnMap: 'Show on map',
   },
@@ -313,11 +320,20 @@ const JourneyPreviewContent = ({
 interface PoiPreviewContentProps {
   annotation: RawAnnotation | null;
   id: string;
+  linkedMapManifestId: string | null;
   locale: ContentLocale;
+  openNestedMap: (windowId: string, manifestId: string) => void;
   windowId: string;
 }
 
-const PoiPreviewContent = ({ annotation, id, locale, windowId }: PoiPreviewContentProps) => {
+const PoiPreviewContent = ({
+  annotation,
+  id,
+  linkedMapManifestId,
+  locale,
+  openNestedMap: dispatchOpenNestedMap,
+  windowId,
+}: PoiPreviewContentProps) => {
   const labels = LABELS[locale];
   const kind = annotation?.['dbf:kind'];
   const title = annotation ? textBody(annotation, locale, 'identifying') : '';
@@ -341,6 +357,16 @@ const PoiPreviewContent = ({ annotation, id, locale, windowId }: PoiPreviewConte
               {media.mediaType ? ` (${media.mediaType})` : ''}
             </p>
           ))}
+        {linkedMapManifestId && (
+          <Button
+            onClick={() => dispatchOpenNestedMap(windowId, linkedMapManifestId)}
+            startIcon={<MapIcon />}
+            sx={{ marginTop: 2 }}
+            variant="contained"
+          >
+            {labels.openMap}
+          </Button>
+        )}
       </div>
     </CompanionWindow>
   );
@@ -350,7 +376,9 @@ interface PreviewContentProps {
   annotation: RawAnnotation | null;
   id: string;
   journeyPois: RawAnnotation[];
+  linkedMapManifestId: string | null;
   locale: ContentLocale;
+  openNestedMap: (windowId: string, manifestId: string) => void;
   selectAnnotation: typeof selectAnnotation;
   selectedAnnotationId?: string;
   windowId: string;
@@ -360,7 +388,9 @@ const PreviewContent = ({
   annotation,
   id,
   journeyPois,
+  linkedMapManifestId,
   locale,
+  openNestedMap: dispatchOpenNestedMap,
   selectAnnotation: dispatchSelectAnnotation,
   selectedAnnotationId,
   windowId,
@@ -378,7 +408,16 @@ const PreviewContent = ({
       />
     );
   }
-  return <PoiPreviewContent annotation={annotation} id={id} locale={locale} windowId={windowId} />;
+  return (
+    <PoiPreviewContent
+      annotation={annotation}
+      id={id}
+      linkedMapManifestId={linkedMapManifestId}
+      locale={locale}
+      openNestedMap={dispatchOpenNestedMap}
+      windowId={windowId}
+    />
+  );
 };
 
 const poiPreviewCompanionWindowPlugin = {
@@ -400,11 +439,13 @@ const poiPreviewCompanionWindowPlugin = {
       annotation,
       journeyPois:
         annotation && annotation['dbf:kind'] === 'Journey' ? getOrderedJourneyPois(items, annotation.id) : [],
+      // Only a Nested Map point whose map the host can resolve gets an "Open map" button.
+      linkedMapManifestId: getLinkedMapManifestId(state, annotation?.['dbf:linkedMap']),
       locale: getContentLocale((getConfig(state) as { language?: string }).language),
       selectedAnnotationId: getSelectedAnnotationId(state, { windowId }) as string | undefined,
     };
   },
-  mapDispatchToProps: { selectAnnotation },
+  mapDispatchToProps: { openNestedMap, selectAnnotation },
 };
 
 // A canvas annotation resource, as AnnotationsOverlay's own `annotations`/`searchAnnotations`

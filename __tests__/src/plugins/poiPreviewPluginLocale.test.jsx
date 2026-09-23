@@ -1,4 +1,5 @@
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import PropTypes from 'prop-types';
 import { getContentLocale, poiPreviewPlugins } from '../../../src/plugins/poiPreviewPlugin.tsx';
 
@@ -102,6 +103,36 @@ describe('poiPreviewPlugin locale', () => {
       renderPreview(null, 'ar');
 
       expect(screen.getByText('تعذر العثور على هذا العنصر - ربما تم حذفه.')).toBeInTheDocument();
+    });
+  });
+
+  describe('Nested Map point preview', () => {
+    const nestedMapPoi = { ...poi, 'dbf:journey': null, 'dbf:linkedMap': { id: 'nested' } };
+
+    it('opens the linked map in place of the current one', async () => {
+      const openNestedMap = vi.fn();
+      render(
+        <PreviewContent
+          annotation={nestedMapPoi}
+          id="cw"
+          journeyPois={[]}
+          linkedMapManifestId="https://example.org/maps/nested/manifest"
+          locale="en"
+          openNestedMap={openNestedMap}
+          selectAnnotation={vi.fn()}
+          windowId="window"
+        />,
+      );
+
+      await userEvent.click(screen.getByRole('button', { name: 'Open map' }));
+
+      expect(openNestedMap).toHaveBeenCalledWith('window', 'https://example.org/maps/nested/manifest');
+    });
+
+    it('has no "Open map" button when the linked map cannot be resolved', () => {
+      renderPreview(nestedMapPoi, 'en');
+
+      expect(screen.queryByRole('button', { name: 'Open map' })).not.toBeInTheDocument();
     });
   });
 

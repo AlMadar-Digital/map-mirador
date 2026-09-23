@@ -11,6 +11,38 @@ import { poiPreviewPlugins } from '../plugins/poiPreviewPlugin.tsx';
 export const defaultMapViewerConfig = {
   theme: {
     components: {
+      // Companion windows (e.g. the POI/journey preview) float over the map instead of
+      // taking space next to it, so opening one slides it in without resizing the canvas.
+      Window: {
+        styleOverrides: {
+          bottom: ({ theme }) => ({
+            bottom: 0,
+            left: 0,
+            position: 'absolute',
+            right: 0,
+            zIndex: theme.zIndex.appBar - 2,
+            '& .mirador-companion-window-bottom': {
+              boxShadow: theme.shadows[8],
+            },
+          }),
+          column: {
+            position: 'relative',
+          },
+          right: ({ theme }) => ({
+            bottom: 0,
+            insetInlineEnd: 0,
+            position: 'absolute',
+            top: 0,
+            zIndex: theme.zIndex.appBar - 2,
+            '& .mirador-companion-window-right, & .mirador-companion-window-far-right': {
+              boxShadow: theme.shadows[8],
+            },
+          }),
+          row: {
+            position: 'relative',
+          },
+        },
+      },
       WindowTopBar: {
         styleOverrides: {
           root: {

@@ -2,7 +2,7 @@
 import { Children, cloneElement, forwardRef } from 'react';
 import { useSelector } from 'react-redux';
 import PropTypes from 'prop-types';
-import { styled } from '@mui/material/styles';
+import { keyframes, styled } from '@mui/material/styles';
 import CloseIcon from '@mui/icons-material/CloseSharp';
 import OpenInNewIcon from '@mui/icons-material/OpenInNewSharp';
 import MoveIcon from '@mui/icons-material/DragIndicatorSharp';
@@ -18,7 +18,44 @@ import ns from '../config/css-ns';
 import LocaleContext from '../contexts/LocaleContext';
 import { getCompanionWindowLocale } from '../state/selectors/companionWindows';
 
-const Root = styled(Paper, { name: 'CompanionWindow', slot: 'root' })({});
+/** Keyframes sliding the companion window in from the edge it is docked against */
+const slideIn = (from) => keyframes`
+  from { transform: ${from}; }
+  to { transform: none; }
+`;
+
+const slideInFrom = {
+  bottom: slideIn('translateY(100%)'),
+  left: slideIn('translateX(-100%)'),
+  right: slideIn('translateX(100%)'),
+};
+
+/** Edge the companion window slides in from, or null when it should not animate */
+const slideEdge = ({ direction, position }) => {
+  switch (position) {
+    case 'right':
+    case 'far-right':
+      return direction === 'rtl' ? 'left' : 'right';
+    case 'bottom':
+    case 'far-bottom':
+      return 'bottom';
+    default:
+      // left panels are already animated by the CompanionArea Slide
+      return null;
+  }
+};
+
+const Root = styled(Paper, { name: 'CompanionWindow', slot: 'root' })(({ ownerState, theme }) => {
+  const edge = slideEdge(ownerState);
+  if (!edge) return {};
+
+  return {
+    animation: `${slideInFrom[edge]} 600ms ${theme.transitions.easing.easeInOut}`,
+    '@media (prefers-reduced-motion: reduce)': {
+      animation: 'none',
+    },
+  };
+});
 const StyledToolbar = styled(Toolbar, { name: 'CompanionWindow', slot: 'toolbar' })({});
 const StyledTitle = styled(Typography, { name: 'CompanionWindow', slot: 'title' })({});
 const StyledTitleControls = styled('div', { name: 'CompanionWindow', slot: 'controls' })({});

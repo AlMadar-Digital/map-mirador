@@ -37,6 +37,19 @@ describe('nestedMapPlugin', () => {
       expect(getLinkedMapManifestId(store.getState(), { id: 'nested' })).toBe(NESTED);
     });
 
+    it("uses the manifest URL the annotation carries, over the resolver's (issue #427)", () => {
+      const store = setupStore();
+      store.dispatch(updateConfig({ maps: { getLinkedMapManifestId: () => 'https://example.org/other/manifest' } }));
+
+      expect(getLinkedMapManifestId(store.getState(), { id: 'nested', manifestId: NESTED })).toBe(NESTED);
+    });
+
+    it('uses the manifest URL the annotation carries without any resolver (issue #427)', () => {
+      const store = setupStore();
+
+      expect(getLinkedMapManifestId(store.getState(), { id: 'nested', manifestId: NESTED })).toBe(NESTED);
+    });
+
     it('is null without a linked map or without a resolver', () => {
       const store = setupStore();
       expect(getLinkedMapManifestId(store.getState(), { id: 'nested' })).toBeNull();

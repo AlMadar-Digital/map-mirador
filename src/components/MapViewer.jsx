@@ -82,9 +82,10 @@ export const MAP_VIEWER_LANGUAGES = ['en', 'ar'];
  * `lang` drives both Mirador's own UI (labels, and right-to-left layout for Arabic) and the
  * POI/journey previews, which show only that language's content.
  *
- * `getLinkedMapManifestId` turns a Nested Map point's linked map (`{ id }`, the map's Strapi
- * documentId) into its manifest URL. When given, a Nested Map point's preview gets an "Open
- * map" button, which shows the linked map in place of the current one with a "Back" button.
+ * A Nested Map point's preview gets an "Open map" button, which shows the linked map in place
+ * of the current one with a "Back" button. The linked map's manifest URL comes from the
+ * annotation (`dbf:linkedMap.manifestId`); `getLinkedMapManifestId` is only needed for
+ * annotations that don't carry it, turning their linked map (`{ id }`) into a manifest URL.
  */
 export function MapViewer({ getLinkedMapManifestId = undefined, lang = 'en', manifestId }) {
   const baseId = useId().replace(/:/g, '');
@@ -143,7 +144,7 @@ export function MapViewer({ getLinkedMapManifestId = undefined, lang = 'en', man
 }
 
 MapViewer.propTypes = {
-  /** Resolves a Nested Map point's linked map (`{ id, titleEn }`) to its manifest URL - enables opening nested maps. */
+  /** Resolves a Nested Map point's linked map (`{ id, titleEn }`) to its manifest URL, when its annotation has no `dbf:linkedMap.manifestId`. */
   getLinkedMapManifestId: PropTypes.func,
   /** Language of the viewer's UI and of the POI/journey content it previews. */
   lang: PropTypes.oneOf(MAP_VIEWER_LANGUAGES),

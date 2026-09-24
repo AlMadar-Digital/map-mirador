@@ -22,14 +22,17 @@ import {
 // (`window.mapHistory`) so it lives and dies with the window, and nested maps can themselves
 // open further nested maps.
 
-/** The linked-map reference a Nested Map point carries (see the Strapi maps plugin's annotationConversion.ts). */
-export type LinkedMap = { id: string; titleEn?: string | null };
+/**
+ * The linked-map reference a Nested Map point carries (see the Strapi maps plugin's
+ * annotationConversion.ts): the map's id and, when the annotation server provides it, the URL
+ * of its IIIF manifest (`manifestId`).
+ */
+export type LinkedMap = { id: string; titleEn?: string | null; manifestId?: string | null };
 
 /**
- * Resolves a linked map to the URL of its IIIF manifest. Only the host app knows its manifest
- * endpoint, so it's given through Mirador's config (`maps.getLinkedMapManifestId`, which
- * MapViewer's `getLinkedMapManifestId` prop sets) - the same way the annotation editor delegates
- * `annotation.openLinkedMap` to its host.
+ * Resolves a linked map to the URL of its IIIF manifest, for annotations that don't carry it
+ * themselves (`dbf:linkedMap.manifestId`). Given through Mirador's config
+ * (`maps.getLinkedMapManifestId`, which MapViewer's `getLinkedMapManifestId` prop sets).
  */
 export type LinkedMapManifestResolver = (linkedMap: LinkedMap) => string | null | undefined;
 
@@ -38,9 +41,13 @@ type MiradorWindow = { id: string; manifestId?: string; mapHistory?: MapHistoryE
 type Dispatch = (action: unknown) => void;
 type GetState = () => unknown;
 
-/** The URL of the manifest a linked map resolves to, or null when the host can't resolve it (or gave no resolver). */
+/**
+ * The URL of a linked map's manifest: the one the annotation carries, else the one the host's
+ * resolver gives, else null.
+ */
 export const getLinkedMapManifestId = (state: unknown, linkedMap?: LinkedMap | null): string | null => {
   if (!linkedMap?.id) return null;
+  if (linkedMap.manifestId) return linkedMap.manifestId;
   const resolve = (getConfig(state) as { maps?: { getLinkedMapManifestId?: LinkedMapManifestResolver } }).maps
     ?.getLinkedMapManifestId;
   return resolve?.(linkedMap) || null;

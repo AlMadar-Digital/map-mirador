@@ -25,9 +25,10 @@
     const lang = new URLSearchParams(window.location.search).get('lang') === 'ar' ? 'ar' : 'en';
     document.documentElement.lang = lang;
 
-    // Nested maps: the host turns a Nested Map point's linked map id into its manifest URL (the
-    // platform uses its Strapi manifest endpoint). The demo map's "Old City" point links to a map
-    // with no published manifest yet, so a public IIIF manifest stands in for it.
+    // Nested maps: a Nested Map point's annotation normally carries its linked manifest URL
+    // (`dbf:linkedMap.manifestId`, added by the platform's Strapi maps plugin). This static demo
+    // map predates it, so its "Old City" point is resolved here instead, to a public IIIF
+    // manifest standing in for a map with no published manifest yet.
     const DEMO_NESTED_MAP_MANIFESTS = {
       ak1vrjnvgfygwwqc38hyf9sx: 'https://purl.stanford.edu/hg676jb4964/iiif/manifest',
     };

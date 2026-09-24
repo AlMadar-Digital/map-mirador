@@ -138,4 +138,9 @@ export default class AnnotationItem {
   get journeyOrder() {
     return this.resource['dbf:journey']?.order ?? null;
   }
+
+  /** the id of the journey the POI belongs to (see mirador-annotation-editor's `dbf:journey`), or null when the POI is not part of a journey */
+  get journeyId() {
+    return this.resource['dbf:journey']?.id ?? null;
+  }
 }

@@ -272,7 +272,53 @@ describe('CanvasAnnotationDisplay', () => {
       subject.pointContext();
 
       expect(context.arc).toHaveBeenCalledWith(50, 34.9, 18.6, 0, Math.PI * 2);
-      expect(context.fillText).toHaveBeenCalledWith('3', 50, 34.9);
+      // dbf:journey.order is 0-based, stop numbers shown to users are 1-based
+      expect(context.fillText).toHaveBeenCalledWith('4', 50, 34.9);
+    });
+
+    it('prefers the stop number computed by the caller over the stored order', () => {
+      const context = createMockContext();
+      const subject = createSubject({
+        journeyStopNumber: 2,
+        resource: createPointResource({ 'dbf:journey': { id: 'journey1', order: 7 } }),
+      });
+      subject.context = context;
+      subject.pointContext();
+
+      expect(context.fillText).toHaveBeenCalledWith('2', 50, 34.9);
+    });
+
+    it('draws an unselected pin in the POI blue, without outline', () => {
+      const context = createMockContext();
+      const subject = createSubject({ resource: createPointResource() });
+      subject.context = context;
+      subject.pointContext();
+
+      expect(context.fillStyle).toBe('#1e88e5');
+      expect(context.stroke).not.toHaveBeenCalled();
+    });
+
+    it('draws a selected pin bigger and outlined, keeping the POI blue', () => {
+      const context = createMockContext();
+      const subject = createSubject({ resource: createPointResource(), selected: true, zoomRatio: 0.5 });
+      subject.context = context;
+      subject.pointContext();
+
+      // iconHeight = 44 * 1.3 / 0.5 = 114.4; iconScale = 1.144
+      const [scaleX, scaleY] = context.scale.mock.calls[0];
+      expect(scaleX).toBeCloseTo(1.144);
+      expect(scaleY).toBeCloseTo(1.144);
+      expect(context.fillStyle).toBe('#1e88e5');
+      expect(context.stroke).toHaveBeenCalled();
+    });
+
+    it('keeps a hovered pin in the POI blue rather than the hovered palette color', () => {
+      const context = createMockContext();
+      const subject = createSubject({ hovered: true, resource: createPointResource() });
+      subject.context = context;
+      subject.pointContext();
+
+      expect(context.fillStyle).toBe('#1e88e5');
     });
   });
 

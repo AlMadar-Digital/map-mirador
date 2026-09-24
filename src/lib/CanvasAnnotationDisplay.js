@@ -20,6 +20,10 @@ const POI_ICON_HEAD = { x: 50, y: 34.9, radius: 18.6 };
 /** Font size of the journey-order number, relative to POI_ICON_HEAD.radius, so it's bigger than the badge circle would otherwise imply while the circle itself stays the same size. */
 const POI_ICON_HEAD_FONT_SCALE = 1.6;
 const POI_ICON_DEFAULT_FILL = '#1e88e5';
+/** How much bigger a selected POI's icon is drawn than the others, so it stands out on the map. */
+export const POI_ICON_SELECTED_SCALE = 1.3;
+/** Outline drawn around a selected POI's icon, setting it apart from the other pins. */
+const POI_ICON_SELECTED_OUTLINE = '#212121';
 /** Constant on-screen height (CSS px) for the POI icon, regardless of zoom - counter-scaled the same way this class already counter-scales stroke width (see `lineWidth /= zoomRatio` in svgContext). */
 export const POI_ICON_HEIGHT_PX = 44;
 /**
@@ -51,8 +55,9 @@ export function poiHitTarget(x, y, zoomRatio) {
 
 export default class CanvasAnnotationDisplay {
   /** */
-  constructor({ resource, palette, zoomRatio, offset, selected, hovered }) {
+  constructor({ resource, palette, zoomRatio, offset, selected, hovered, journeyStopNumber }) {
     this.resource = resource;
+    this.journeyStopNumber = journeyStopNumber;
     this.palette = palette;
     this.zoomRatio = zoomRatio;
     this.offset = offset;
@@ -81,17 +86,23 @@ export default class CanvasAnnotationDisplay {
 
   /**
    * Draws a POI marker (IIIF PointSelector) as the SVG pin icon, at a constant on-screen size,
-   * with the icon's own tip placed exactly on the annotated point. When the annotation carries
-   * journey-order metadata (`dbf:journey.order`), also draws a numbered badge over the icon's
-   * head, so a POI's position within its journey is visible directly on the map.
+   * with the icon's own tip placed exactly on the annotated point. When the POI belongs to a
+   * journey, also draws its (1-based) stop number in a badge over the icon's head, so its
+   * position within the journey is visible directly on the map.
+   *
+   * The POI currently selected (from the map or a list) is drawn bigger and outlined, keeping
+   * the POI blue, so it stands out.
    */
   pointContext() {
     const { x, y } = this.resource.pointSelector;
     const currentPalette = this.currentPalette();
     if (currentPalette.globalAlpha === 0) return;
 
-    const iconHeight = POI_ICON_HEIGHT_PX / this.zoomRatio;
+    const sizeScale = this.selected ? POI_ICON_SELECTED_SCALE : 1;
+    const iconHeight = (POI_ICON_HEIGHT_PX * sizeScale) / this.zoomRatio;
     const iconScale = iconHeight / POI_ICON_VIEWBOX_SIZE;
+    const iconPath = new Path2D(POI_ICON_PATH_D);
+    const fill = this.poiFill();
 
     this.context.save();
     this.context.translate(this.offset.x + x, this.offset.y + y);
@@ -99,34 +110,61 @@ export default class CanvasAnnotationDisplay {
     this.context.translate(-POI_ICON_TIP.x, -POI_ICON_TIP.y);
 
     this.context.globalAlpha = currentPalette.globalAlpha ?? 1;
-    this.context.fillStyle = currentPalette.fillStyle || POI_ICON_DEFAULT_FILL;
-    this.context.fill(new Path2D(POI_ICON_PATH_D));
+    this.context.fillStyle = fill;
+    this.context.fill(iconPath);
 
-    const { journeyOrder } = this.resource;
-    if (journeyOrder != null) {
-      this.journeyOrderBadgeContext(journeyOrder);
+    if (this.selected) {
+      this.context.strokeStyle = POI_ICON_SELECTED_OUTLINE;
+      // in viewBox units, i.e. 2 CSS px once scaled to the icon's on-screen size
+      this.context.lineWidth = (2 * POI_ICON_VIEWBOX_SIZE) / (POI_ICON_HEIGHT_PX * sizeScale);
+      this.context.stroke(iconPath);
+    }
+
+    const stopNumber = this.journeyStopNumberToDisplay();
+    if (stopNumber != null) {
+      this.journeyOrderBadgeContext(stopNumber, fill);
     }
 
     this.context.restore();
   }
 
   /**
+   * The POI icon's fill color: the POI blue in every state - a selected POI stands out by its
+   * size and outline rather than by Mirador's selection color (yellow by default).
+   */
+  poiFill() {
+    return this.palette.default?.fillStyle || POI_ICON_DEFAULT_FILL;
+  }
+
+  /**
+   * The 1-based stop number shown on a journey POI: its rank within the journey when the caller
+   * computed it (`journeyStopNumber`, see AnnotationsOverlay), otherwise derived from the stored
+   * `dbf:journey.order`, which is 0-based. Null when the POI is not part of a journey.
+   */
+  journeyStopNumberToDisplay() {
+    if (this.journeyStopNumber != null) return this.journeyStopNumber;
+    const { journeyOrder } = this.resource;
+    return journeyOrder != null ? journeyOrder + 1 : null;
+  }
+
+  /**
    * Draws a small numbered circle over the POI icon's head, in the icon's own (viewBox-unit,
    * already-scaled/translated) coordinate space - called from within pointContext's transform,
    * before it restores the context.
-   * @param {number} order
+   * @param {number} stopNumber
+   * @param {string} textColor
    */
-  journeyOrderBadgeContext(order) {
+  journeyOrderBadgeContext(stopNumber, textColor) {
     this.context.beginPath();
     this.context.arc(POI_ICON_HEAD.x, POI_ICON_HEAD.y, POI_ICON_HEAD.radius, 0, Math.PI * 2);
     this.context.fillStyle = '#ffffff';
     this.context.fill();
 
-    this.context.fillStyle = this.currentPalette().fillStyle || POI_ICON_DEFAULT_FILL;
+    this.context.fillStyle = textColor;
     this.context.font = `bold ${POI_ICON_HEAD.radius * POI_ICON_HEAD_FONT_SCALE}px sans-serif`;
     this.context.textAlign = 'center';
     this.context.textBaseline = 'middle';
-    this.context.fillText(String(order), POI_ICON_HEAD.x, POI_ICON_HEAD.y);
+    this.context.fillText(String(stopNumber), POI_ICON_HEAD.x, POI_ICON_HEAD.y);
   }
 
   /** */

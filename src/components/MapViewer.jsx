@@ -90,7 +90,8 @@ export const MAP_VIEWER_LANGUAGES = ['en', 'ar'];
  *
  * The mouse wheel tours the map's POIs (in their `dbf:order`, journeys unrolled into their
  * stops) instead of zooming - see mapInteractionPlugin.tsx. Shift+wheel, pinch-to-zoom and
- * the zoom controls still zoom.
+ * the zoom controls still zoom. On a touch screen, a quick horizontal swipe steps through them
+ * the same way, while a slower drag still pans.
  */
 export function MapViewer({ getLinkedMapManifestId = undefined, lang = 'en', manifestId }) {
   const baseId = useId().replace(/:/g, '');

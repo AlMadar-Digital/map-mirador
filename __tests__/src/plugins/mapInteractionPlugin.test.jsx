@@ -1,5 +1,10 @@
 import { render } from '@testing-library/react';
-import { getNextTourStep, getTourSteps, mapInteractionPlugins } from '../../../src/plugins/mapInteractionPlugin.tsx';
+import {
+  getNextTourStep,
+  getSwipeDirection,
+  getTourSteps,
+  mapInteractionPlugins,
+} from '../../../src/plugins/mapInteractionPlugin.tsx';
 
 const at = (x, y) => ({ selector: [{ type: 'PointSelector', x, y }], source: 'canvas' });
 
@@ -67,6 +72,36 @@ describe('getNextTourStep', () => {
   });
 });
 
+describe('getSwipeDirection', () => {
+  const LEFT = Math.PI;
+  const RIGHT = 0;
+  const fast = 1000;
+
+  it('goes to the next POI on a quick swipe left, the previous one on a swipe right', () => {
+    expect(getSwipeDirection({ direction: LEFT, speed: fast }, { x: -120, y: 10 }, false)).toBe(1);
+    expect(getSwipeDirection({ direction: RIGHT, speed: fast }, { x: 120, y: -10 }, false)).toBe(-1);
+  });
+
+  it('mirrors the directions in a right-to-left layout', () => {
+    expect(getSwipeDirection({ direction: RIGHT, speed: fast }, { x: 120, y: 0 }, true)).toBe(1);
+    expect(getSwipeDirection({ direction: LEFT, speed: fast }, { x: -120, y: 0 }, true)).toBe(-1);
+  });
+
+  it('leaves slow or short drags panning the map', () => {
+    expect(getSwipeDirection({ direction: LEFT, speed: 200 }, { x: -120, y: 0 }, false)).toBeNull();
+    expect(getSwipeDirection({ direction: LEFT, speed: fast }, { x: -20, y: 0 }, false)).toBeNull();
+  });
+
+  it('ignores mostly vertical drags', () => {
+    expect(getSwipeDirection({ direction: LEFT, speed: fast }, { x: -100, y: 120 }, false)).toBeNull();
+    expect(getSwipeDirection({ direction: Math.PI / 2, speed: fast }, { x: -120, y: 0 }, false)).toBeNull();
+  });
+
+  it('ignores a drag that flicks back the other way at the end', () => {
+    expect(getSwipeDirection({ direction: RIGHT, speed: fast }, { x: -120, y: 0 }, false)).toBeNull();
+  });
+});
+
 describe('mapInteractionPlugin wheel handling', () => {
   const [{ component: Wrapper }] = mapInteractionPlugins;
   let handler;
@@ -74,9 +109,11 @@ describe('mapInteractionPlugin wheel handling', () => {
   let now;
 
   /** A stand-in OSD viewer keeping hold of its canvas-scroll handler */
+  let handlers;
   const viewer = {
     addHandler: (name, fn) => {
-      handler = fn;
+      handlers[name] = fn;
+      if (name === 'canvas-scroll') handler = fn;
     },
     removeHandler: vi.fn(),
     viewport: {
@@ -104,6 +141,7 @@ describe('mapInteractionPlugin wheel handling', () => {
   };
 
   beforeEach(() => {
+    handlers = {};
     now = 0;
     vi.spyOn(Date, 'now').mockImplementation(() => now);
     vi.spyOn(window, 'requestAnimationFrame').mockImplementation(() => 0);
@@ -198,5 +236,99 @@ describe('mapInteractionPlugin wheel handling', () => {
 
     expect(event.preventDefaultAction).toBe(true);
     expect(props.selectAnnotation).not.toHaveBeenCalled();
+  });
+
+  describe('touch swipes', () => {
+    /** Plays a one-finger touch gesture dragging by `moves`, ending at `speed` towards `direction` */
+    const swipe = (moves, { direction, speed = 1000, pinch = false, pointerType = 'touch' }) => {
+      handlers['canvas-press']({ pointerType });
+      moves.forEach(([x, y]) => handlers['canvas-drag']({ delta: { x, y }, pointerType }));
+      if (pinch) handlers['canvas-pinch']({});
+      const event = { direction, pointerType, preventDefaultAction: false, speed };
+      handlers['canvas-drag-end'](event);
+      return event;
+    };
+
+    it('opens the next POI on a quick swipe left, without the flick carrying the map on', () => {
+      render(<Wrapper {...props} existingPreviewCompanionWindowId="cw" selectedAnnotationId="cairo" />);
+
+      const event = swipe(
+        [
+          [-40, 0],
+          [-40, 5],
+          [-40, 0],
+        ],
+        { direction: Math.PI },
+      );
+
+      expect(event.preventDefaultAction).toBe(true);
+      expect(props.selectAnnotation).toHaveBeenCalledWith('window', 'aswan');
+    });
+
+    it('goes back on a swipe right', () => {
+      render(<Wrapper {...props} existingPreviewCompanionWindowId="cw" selectedAnnotationId="cairo" />);
+
+      swipe(
+        [
+          [60, 0],
+          [60, 0],
+        ],
+        { direction: 0 },
+      );
+
+      expect(props.selectAnnotation).toHaveBeenCalledWith('window', 'first');
+    });
+
+    it('leaves a slow drag panning the map', () => {
+      render(<Wrapper {...props} />);
+
+      const event = swipe(
+        [
+          [-60, 0],
+          [-60, 0],
+        ],
+        { direction: Math.PI, speed: 100 },
+      );
+
+      expect(event.preventDefaultAction).toBe(false);
+      expect(props.selectAnnotation).not.toHaveBeenCalled();
+    });
+
+    it('ignores a pinch', () => {
+      render(<Wrapper {...props} />);
+
+      swipe(
+        [
+          [-60, 0],
+          [-60, 0],
+        ],
+        { direction: Math.PI, pinch: true },
+      );
+
+      expect(props.selectAnnotation).not.toHaveBeenCalled();
+    });
+
+    it('ignores mouse drags', () => {
+      render(<Wrapper {...props} />);
+
+      swipe(
+        [
+          [-60, 0],
+          [-60, 0],
+        ],
+        { direction: Math.PI, pointerType: 'mouse' },
+      );
+
+      expect(props.selectAnnotation).not.toHaveBeenCalled();
+    });
+
+    it('measures each gesture from its own start', () => {
+      render(<Wrapper {...props} />);
+
+      swipe([[-30, 0]], { direction: Math.PI, speed: 100 });
+      swipe([[-30, 0]], { direction: Math.PI });
+
+      expect(props.selectAnnotation).not.toHaveBeenCalled();
+    });
   });
 });

@@ -146,7 +146,17 @@ export function MapViewer({ getLinkedMapManifestId = undefined, lang = 'en', man
     }
   }, [lang]);
 
-  return <div lang={lang} ref={wrapperRef} style={{ height: '100%', position: 'relative', width: '100%' }} />;
+  // `dir` as well as `lang`: Mirador turns its theme right-to-left for Arabic, but - like its own
+  // RTL demo - leaves the text direction to its container, so without it titles and headers
+  // would still be laid out left-to-right.
+  return (
+    <div
+      dir={lang === 'ar' ? 'rtl' : 'ltr'}
+      lang={lang}
+      ref={wrapperRef}
+      style={{ height: '100%', position: 'relative', width: '100%' }}
+    />
+  );
 }
 
 MapViewer.propTypes = {

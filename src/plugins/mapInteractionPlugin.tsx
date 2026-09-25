@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ComponentType } from 'react';
+import { useEffect, useRef } from 'react';
 import { useTheme } from '@mui/material/styles';
 import {
   addCompanionWindow,
@@ -169,9 +169,9 @@ const zoomAtPointer = (viewer: OsdViewerLike, event: CanvasScrollEvent) => {
   viewport.applyConstraints();
 };
 
-interface AnnotationsOverlayTourWrapperProps {
-  TargetComponent: ComponentType<Record<string, unknown>>;
-  targetProps: { viewer?: OsdViewerLike | null; windowId: string; [key: string]: unknown };
+interface MapTourControllerProps {
+  viewer?: OsdViewerLike | null;
+  windowId: string;
   addCompanionWindow: typeof addCompanionWindow;
   annotationPages?: Parameters<typeof annotationPagesItems>[0];
   existingPreviewCompanionWindowId?: string;
@@ -180,19 +180,21 @@ interface AnnotationsOverlayTourWrapperProps {
   updateCompanionWindow: typeof updateCompanionWindow;
 }
 
-// Wraps AnnotationsOverlay, which receives the window's OpenSeadragon viewer, to take over its
-// wheel and touch-swipe handling.
-const AnnotationsOverlayTourWrapper = ({
-  TargetComponent,
-  targetProps,
+// Renders nothing: added to OpenSeadragonViewer, which hands its plugins the window's
+// OpenSeadragon viewer, it takes over that viewer's wheel and touch-swipe handling. An `add`
+// plugin rather than a wrapper of AnnotationsOverlay (which also gets the viewer), because
+// Mirador doesn't chain wrappers of one component: each is handed the bare component, so
+// poiPreviewPlugins' own AnnotationsOverlay wrapper would keep this one from ever rendering.
+const MapTourController = ({
+  viewer,
+  windowId,
   addCompanionWindow: dispatchAddCompanionWindow,
   annotationPages,
   existingPreviewCompanionWindowId,
   selectAnnotation: dispatchSelectAnnotation,
   selectedAnnotationId,
   updateCompanionWindow: dispatchUpdateCompanionWindow,
-}: AnnotationsOverlayTourWrapperProps) => {
-  const { viewer, windowId } = targetProps;
+}: MapTourControllerProps) => {
   const previewPosition = usePreviewPosition();
   const isRtl = useTheme().direction === 'rtl';
 
@@ -301,13 +303,13 @@ const AnnotationsOverlayTourWrapper = ({
     return () => handlers.forEach(([name, handler]) => viewer.removeHandler(name, handler));
   }, [viewer, windowId]);
 
-  return <TargetComponent {...targetProps} />;
+  return null;
 };
 
 const mapInteractionPlugin = {
-  target: 'AnnotationsOverlay',
-  mode: 'wrap',
-  component: AnnotationsOverlayTourWrapper,
+  target: 'OpenSeadragonViewer',
+  mode: 'add',
+  component: MapTourController,
   mapStateToProps: (state: unknown, { windowId }: { windowId: string }) => ({
     annotationPages: getCanvasAnnotationPages(state, windowId),
     existingPreviewCompanionWindowId: getPreviewCompanionWindowId(state, windowId),

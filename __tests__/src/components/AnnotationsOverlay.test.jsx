@@ -401,6 +401,45 @@ describe('AnnotationsOverlay', () => {
       expect(selectAnnotation).toHaveBeenCalledWith('base', 'http://example.org/identifier/annotation/poi-1');
     });
 
+    it('selects a POI over a larger shape it sits inside (e.g. the area of a journey path)', () => {
+      const selectAnnotation = vi.fn();
+      const { viewer } = createWrapper({
+        annotations: [
+          new AnnotationPage({
+            id: 'foo',
+            items: [
+              {
+                id: 'http://example.org/identifier/annotation/journey-area',
+                motivation: 'highlighting',
+                target: 'http://iiif.io/api/presentation/2.0/example/fixtures/canvas/24/c1.json#xywh=120,110,200,200',
+              },
+              {
+                id: 'http://example.org/identifier/annotation/poi-1',
+                motivation: 'highlighting',
+                target: {
+                  selector: [{ type: 'PointSelector', x: 150, y: 150 }],
+                  source: 'http://iiif.io/api/presentation/2.0/example/fixtures/canvas/24/c1.json',
+                },
+              },
+            ],
+          }),
+        ],
+        selectAnnotation,
+      });
+      vi.spyOn(viewer.world, 'getItemAt').mockImplementation((index) =>
+        index === 0 ? { viewportToImageZoom: () => 1 } : undefined,
+      );
+      vi.spyOn(viewer.viewport, 'getZoom').mockImplementation(() => 1);
+
+      // On the pin's head, just inside the shape's top-left corner - its closest boundary.
+      viewer.raiseEvent('canvas-click', {
+        eventSource: { viewport: viewer.viewport },
+        position: new OpenSeadragon.Point(150, 125),
+      });
+
+      expect(selectAnnotation).toHaveBeenCalledWith('base', 'http://example.org/identifier/annotation/poi-1');
+    });
+
     it('does not select a POI clicked well outside the hit target', () => {
       const selectAnnotation = vi.fn();
       const viewer = createPoiWrapper(selectAnnotation);

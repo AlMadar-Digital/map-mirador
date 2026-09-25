@@ -209,11 +209,17 @@ export function AnnotationsOverlay({
       const [_canvasX, _canvasY, canvasWidth, canvasHeight] = canvasWorld.canvasToWorldCoordinates(canvas.id);
 
       // get all the annotations that contain the click
-      const annos = annotationsAtPoint(canvas, point);
+      const annosAtPoint = annotationsAtPoint(canvas, point);
 
-      if (annos.length > 0) {
+      if (annosAtPoint.length > 0) {
         event.preventDefaultAction = true; // eslint-disable-line no-param-reassign
       }
+
+      // POI pins are drawn over every other shape, so a click on one selects it - never the
+      // shape under it, e.g. the area a journey's path encloses (an svgSelector hit-tests its
+      // whole interior), which the closest-boundary heuristic below would often pick instead.
+      const pins = annosAtPoint.filter((resource) => resource.pointSelector);
+      const annos = pins.length > 0 ? pins : annosAtPoint;
 
       if (annos.length === 1) {
         toggleAnnotation(annos[0].id);

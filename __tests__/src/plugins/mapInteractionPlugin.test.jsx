@@ -149,8 +149,8 @@ describe('mapInteractionPlugin wheel handling', () => {
       addCompanionWindow: vi.fn(),
       annotationPages: { page: { json: { items } } },
       selectAnnotation: vi.fn(),
-      TargetComponent: () => null,
-      targetProps: { viewer, windowId: 'window' },
+      viewer,
+      windowId: 'window',
       updateCompanionWindow: vi.fn(),
     };
   });

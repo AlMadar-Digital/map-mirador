@@ -303,6 +303,28 @@ export const fitMapToPoints = (windowId: string, points: Point[]) => {
   showCenteredInVisibleArea(viewer, { x: minX + width / 2, y: minY + height / 2 }, unitsPerPixel);
 };
 
+// The scrolling content area of the companion window an element is in.
+const getScrollContainer = (element: HTMLElement) =>
+  element.closest<HTMLElement>('.mirador-scrollto-scrollable');
+
+// Scrolls the companion window an element is in so the element starts at its top - for a stop
+// card, its number and title - rather than wherever scrollIntoView's 'nearest' would leave it
+// (the card's end, when it's taller than the panel). Only that panel scrolls: scrollIntoView
+// could also scroll the page around the viewer. The last cards are too close to the end of the
+// list to reach the top, so `spacer` (an empty element after them) grows just enough to let them.
+const scrollCardToTop = (card: HTMLElement, spacer: HTMLElement | null, behavior: ScrollBehavior) => {
+  const scroller = getScrollContainer(card);
+  if (!scroller) return;
+  const top = scroller.scrollTop + card.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
+  if (spacer) {
+    const spacerHeight = spacer.offsetHeight;
+    const missing = top + scroller.clientHeight - (scroller.scrollHeight - spacerHeight);
+    // eslint-disable-next-line no-param-reassign -- sized imperatively, alongside the scroll itself
+    spacer.style.height = `${Math.max(0, missing)}px`;
+  }
+  scroller.scrollTo?.({ behavior, top });
+};
+
 const localeDir = (locale: ContentLocale) => (locale === 'ar' ? 'rtl' : 'ltr');
 
 interface JourneyPreviewContentProps {
@@ -328,6 +350,7 @@ const JourneyPreviewContent = ({
   const journeyTitle = textBody(journey, locale, 'identifying');
 
   const stopsRef = useRef<HTMLDivElement>(null);
+  const spacerRef = useRef<HTMLDivElement>(null);
   const selectedStop = pois.find((poi) => poi.id === selectedAnnotationId);
   const selectedStopPoint = selectedStop ? getPoiPoint(selectedStop) : null;
 
@@ -343,14 +366,34 @@ const JourneyPreviewContent = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `points` is captured by `pointsKey`; the selected stop only matters when the journey is (re)framed
   }, [journey.id, pointsKey, windowId]);
 
-  // A stop selected while the journey is already open (its pin clicked, or scrolled to) is
-  // brought out from under this panel, and its card scrolled into view.
+  // The selected stop (its pin clicked, or scrolled to) is brought out from under this panel,
+  // and its card scrolled to the top of the panel, title first.
   useEffect(() => {
-    if (!selectedStop) return;
+    if (!selectedStop) {
+      if (spacerRef.current) spacerRef.current.style.height = '0px';
+      return undefined;
+    }
     if (selectedStopPoint) ensurePointVisible(windowId, selectedStopPoint);
-    Array.from(stopsRef.current?.children ?? [])
-      .find((card) => (card as HTMLElement).dataset.poiId === selectedStop.id)
-      ?.scrollIntoView?.({ behavior: 'smooth', block: 'nearest' });
+    const stops = stopsRef.current;
+    const card = Array.from(stops?.children ?? []).find(
+      (child): child is HTMLElement => (child as HTMLElement).dataset.poiId === selectedStop.id
+    );
+    if (!stops || !card) return undefined;
+    scrollCardToTop(card, spacerRef.current, 'smooth');
+
+    // Thumbnails of the stops above it that finish loading afterwards push the card down: keep
+    // it at the top until the visitor scrolls the panel themselves. (`load` doesn't bubble,
+    // hence the capture listener.)
+    const scroller = getScrollContainer(card);
+    const realign = () => scrollCardToTop(card, spacerRef.current, 'auto');
+    const userEvents = ['wheel', 'touchstart', 'pointerdown', 'keydown'];
+    const stopFollowing = () => {
+      stops.removeEventListener('load', realign, true);
+      userEvents.forEach((name) => scroller?.removeEventListener(name, stopFollowing));
+    };
+    stops.addEventListener('load', realign, true);
+    userEvents.forEach((name) => scroller?.addEventListener(name, stopFollowing, { passive: true }));
+    return stopFollowing;
     // eslint-disable-next-line react-hooks/exhaustive-deps -- re-runs only when another stop is selected
   }, [selectedStop?.id, windowId]);
 
@@ -441,6 +484,8 @@ const JourneyPreviewContent = ({
             </div>
           );
         })}
+        {/* Room for the last stops to scroll to the top when selected - see scrollCardToTop. */}
+        <div aria-hidden ref={spacerRef} style={{ height: 0 }} />
       </div>
     </CompanionWindow>
   );

@@ -127,7 +127,7 @@ describe('CompanionWindow', () => {
     // eslint-disable-next-line testing-library/no-node-access, testing-library/no-container
     expect(container.querySelector('.react-draggable')).toHaveStyle({
       height: '100%',
-      width: '235px',
+      width: '350px',
     });
     // eslint-disable-next-line testing-library/no-node-access, testing-library/no-container
     expect(container.querySelector('[style*="cursor: col-resize;"]')).toHaveStyle({ left: '-5px' });

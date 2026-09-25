@@ -4,6 +4,7 @@ import { viewer } from '../init';
 import { updateConfig } from '../state/actions/config';
 import { poiPreviewPlugins } from '../plugins/poiPreviewPlugin.tsx';
 import { nestedMapPlugins } from '../plugins/nestedMapPlugin.tsx';
+import { mapInteractionPlugins } from '../plugins/mapInteractionPlugin.tsx';
 
 // Hides Mirador's generic multi-window IIIF-viewer chrome (top bar, workspace controls,
 // canvas panel) so a manifest reads as a single interactive map rather than a document
@@ -86,6 +87,11 @@ export const MAP_VIEWER_LANGUAGES = ['en', 'ar'];
  * of the current one with a "Back" button. The linked map's manifest URL comes from the
  * annotation (`dbf:linkedMap.manifestId`); `getLinkedMapManifestId` is only needed for
  * annotations that don't carry it, turning their linked map (`{ id }`) into a manifest URL.
+ *
+ * The mouse wheel tours the map's POIs (in their `dbf:order`, journeys unrolled into their
+ * stops) instead of zooming - see mapInteractionPlugin.tsx. Shift+wheel, pinch-to-zoom and
+ * the zoom controls still zoom. On a touch screen, a quick horizontal swipe steps through them
+ * the same way, while a slower drag still pans.
  */
 export function MapViewer({ getLinkedMapManifestId = undefined, lang = 'en', manifestId }) {
   const baseId = useId().replace(/:/g, '');
@@ -122,7 +128,7 @@ export function MapViewer({ getLinkedMapManifestId = undefined, lang = 'en', man
         },
         windows: [{ manifestId }],
       },
-      [...poiPreviewPlugins, ...nestedMapPlugins],
+      [...poiPreviewPlugins, ...nestedMapPlugins, ...mapInteractionPlugins],
     );
     instanceRef.current = instance;
 
@@ -140,7 +146,17 @@ export function MapViewer({ getLinkedMapManifestId = undefined, lang = 'en', man
     }
   }, [lang]);
 
-  return <div lang={lang} ref={wrapperRef} style={{ height: '100%', position: 'relative', width: '100%' }} />;
+  // `dir` as well as `lang`: Mirador turns its theme right-to-left for Arabic, but - like its own
+  // RTL demo - leaves the text direction to its container, so without it titles and headers
+  // would still be laid out left-to-right.
+  return (
+    <div
+      dir={lang === 'ar' ? 'rtl' : 'ltr'}
+      lang={lang}
+      ref={wrapperRef}
+      style={{ height: '100%', position: 'relative', width: '100%' }}
+    />
+  );
 }
 
 MapViewer.propTypes = {

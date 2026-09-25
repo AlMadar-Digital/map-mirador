@@ -88,7 +88,7 @@ export const CompanionWindow = forwardRef((props, innerRef) => {
     title = null,
     children = undefined,
     titleControls = null,
-    defaultSidebarPanelWidth = 235,
+    defaultSidebarPanelWidth = 350,
     defaultSidebarPanelHeight = 201,
   } = props;
   const [sizeRef, size] = useElementSize();

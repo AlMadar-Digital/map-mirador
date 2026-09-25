@@ -485,7 +485,7 @@ export default {
     authNewWindowCenter: 'parent', // Configure how to center a new window created by the authentication flow. Options: parent, screen
     sideBarPanel: 'info', // Configure which sidebar is selected by default. Options: info, attribution, canvas, annotations, search
     defaultSidebarPanelHeight: 201, // Configure default sidebar height in pixels
-    defaultSidebarPanelWidth: 235, // Configure default sidebar width in pixels
+    defaultSidebarPanelWidth: 350, // Configure default sidebar width in pixels (~1.5x Mirador's 235, issue #434)
     defaultView: 'single', // Configure which viewing mode (e.g. single, book, gallery) for windows to be opened in
     forceDrawAnnotations: false,
     hideWindowTitle: false, // Configure if the window title is shown in the window title bar or not

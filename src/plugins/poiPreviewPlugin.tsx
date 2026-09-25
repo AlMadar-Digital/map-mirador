@@ -1,4 +1,4 @@
-import { useEffect, type ComponentType } from 'react';
+import { useEffect, useRef, type ComponentType } from 'react';
 import Button from '@mui/material/Button';
 import MapIcon from '@mui/icons-material/MapSharp';
 import useMediaQuery from '@mui/material/useMediaQuery';
@@ -149,22 +149,127 @@ const POI_FOCUS_ZOOM_RATIO = 4;
 // stops' own bounding box (with a floor for journeys whose stops are almost on top of each other).
 const JOURNEY_FIT_PADDING_RATIO = 0.2;
 
-const getOsdViewer = (windowId: string) =>
+// How close (in screen pixels) a pin may get to the edge of the visible map before
+// `ensurePointVisible` treats it as hidden - roughly a pin's own size, so it's never half cut off.
+const VISIBLE_AREA_MARGIN = 32;
+// Below this share of the map's width/height, the part left uncovered by companion windows is
+// too small to frame anything in (e.g. a bottom sheet over most of a phone screen), so the
+// whole map is used instead.
+const MIN_VISIBLE_AREA_RATIO = 0.25;
+
+// The companion window positions that can float over the map (see MapViewer's theme overrides).
+const OVERLAY_COMPANION_WINDOW_SELECTOR = ['left', 'right', 'far-right', 'bottom', 'far-bottom']
+  .map((position) => `aside.mirador-companion-window-${position}`)
+  .join(', ');
+
+type OsdViewport = OpenSeadragon.Viewport;
+type OsdViewer = { element?: HTMLElement; viewport?: OsdViewport };
+// A rectangle in the OpenSeadragon container's own pixel space.
+type PixelRect = { x: number; y: number; width: number; height: number };
+
+const getOsdViewer = (windowId: string): OsdViewer | null =>
   OSDReferences.get(windowId)?.current ?? null;
+
+// The part of the map that isn't hidden behind a companion window floating over it (in
+// MapViewer, the POI/journey preview slides in over the canvas rather than next to it). An
+// overlay that spans the map's full height hides a strip on its side, one spanning its full
+// width hides a strip at the top or bottom; companion windows laid out next to the canvas (as
+// in the Strapi editor) don't intersect it at all, so they're ignored.
+export const getVisibleMapArea = (viewer: OsdViewer): PixelRect | null => {
+  const { element, viewport } = viewer;
+  if (!viewport) return null;
+  const size = viewport.getContainerSize();
+  const full = { height: size.y, width: size.x, x: 0, y: 0 };
+  const windowElement = element?.closest('.mirador-window');
+  if (!element || !windowElement) return full;
+
+  const container = element.getBoundingClientRect();
+  let left = 0;
+  let top = 0;
+  let right = size.x;
+  let bottom = size.y;
+  windowElement.querySelectorAll(OVERLAY_COMPANION_WINDOW_SELECTOR).forEach((overlay) => {
+    const rect = overlay.getBoundingClientRect();
+    const x1 = Math.max(rect.left, container.left) - container.left;
+    const x2 = Math.min(rect.right, container.right) - container.left;
+    const y1 = Math.max(rect.top, container.top) - container.top;
+    const y2 = Math.min(rect.bottom, container.bottom) - container.top;
+    if (x2 - x1 <= 0 || y2 - y1 <= 0) return;
+
+    if (y2 - y1 >= size.y * 0.9) {
+      if (x1 + x2 > size.x) right = Math.min(right, x1);
+      else left = Math.max(left, x2);
+    } else if (x2 - x1 >= size.x * 0.9) {
+      if (y1 + y2 > size.y) bottom = Math.min(bottom, y1);
+      else top = Math.max(top, y2);
+    }
+  });
+
+  if (right - left < size.x * MIN_VISIBLE_AREA_RATIO || bottom - top < size.y * MIN_VISIBLE_AREA_RATIO) {
+    return full;
+  }
+  return { height: bottom - top, width: right - left, x: left, y: top };
+};
+
+// Moves the map so `center` sits in the middle of its visible area, at a scale of
+// `unitsPerPixel` viewport units per screen pixel. OpenSeadragon's own pan/zoom/fit calls all
+// centre on the whole container, which puts the target behind a preview panel, so this builds
+// the matching whole-container bounds itself.
+const showCenteredInVisibleArea = (viewer: OsdViewer, center: Point, unitsPerPixel: number) => {
+  const { viewport } = viewer;
+  const area = getVisibleMapArea(viewer);
+  if (!viewport || !area) return;
+  const size = viewport.getContainerSize();
+
+  viewport.fitBounds(
+    new OpenSeadragon.Rect(
+      center.x - (area.x + area.width / 2) * unitsPerPixel,
+      center.y - (area.y + area.height / 2) * unitsPerPixel,
+      size.x * unitsPerPixel,
+      size.y * unitsPerPixel
+    )
+  );
+};
+
+// OpenSeadragon's zoom is the inverse of the viewport's width in viewport units.
+const unitsPerPixelAtZoom = (viewport: OsdViewport, zoom: number) =>
+  1 / (zoom * viewport.getContainerSize().x);
 
 // Pans the main map onto a point, zooming in if the map is further out than the focus zoom
 // (but never zooming out a user who is already closer in).
 export const focusMapOnPoint = (windowId: string, point: Point) => {
-  const viewport = getOsdViewer(windowId)?.viewport;
-  if (!viewport) return;
+  const viewer = getOsdViewer(windowId);
+  const viewport = viewer?.viewport;
+  if (!viewer || !viewport) return;
 
-  const center = new OpenSeadragon.Point(point.x, point.y);
   const zoom = Math.min(
     viewport.getMaxZoom(),
     Math.max(viewport.getZoom(), viewport.getHomeZoom() * POI_FOCUS_ZOOM_RATIO)
   );
-  viewport.panTo(center);
-  viewport.zoomTo(zoom, center);
+  showCenteredInVisibleArea(viewer, point, unitsPerPixelAtZoom(viewport, zoom));
+};
+
+// Pans the map just enough to bring a point out from under a companion window (or back from
+// off-screen), keeping the current zoom - a no-op when the point is already in view, so
+// clicking a pin the user can see doesn't move the map under them.
+export const ensurePointVisible = (windowId: string, point: Point) => {
+  const viewer = getOsdViewer(windowId);
+  const viewport = viewer?.viewport;
+  const area = viewer ? getVisibleMapArea(viewer) : null;
+  if (!viewer || !viewport || !area) return;
+
+  // Against the viewport's target (not mid-animation) position, so a focus already under way counts.
+  const pixel = viewport.pixelFromPoint(new OpenSeadragon.Point(point.x, point.y));
+  const margin = Math.min(VISIBLE_AREA_MARGIN, area.width / 4, area.height / 4);
+  if (
+    pixel.x >= area.x + margin &&
+    pixel.x <= area.x + area.width - margin &&
+    pixel.y >= area.y + margin &&
+    pixel.y <= area.y + area.height - margin
+  ) {
+    return;
+  }
+  showCenteredInVisibleArea(viewer, point, unitsPerPixelAtZoom(viewport, viewport.getZoom()));
 };
 
 // Fits every stop of a journey in view at once.
@@ -175,8 +280,10 @@ export const fitMapToPoints = (windowId: string, points: Point[]) => {
     return;
   }
 
-  const viewport = getOsdViewer(windowId)?.viewport;
-  if (!viewport) return;
+  const viewer = getOsdViewer(windowId);
+  const viewport = viewer?.viewport;
+  const area = viewer ? getVisibleMapArea(viewer) : null;
+  if (!viewer || !viewport || !area) return;
 
   const xs = points.map(({ x }) => x);
   const ys = points.map(({ y }) => y);
@@ -188,9 +295,12 @@ export const fitMapToPoints = (windowId: string, points: Point[]) => {
   const padX = Math.max(width * JOURNEY_FIT_PADDING_RATIO, home.width * 0.05);
   const padY = Math.max(height * JOURNEY_FIT_PADDING_RATIO, home.height * 0.05);
 
-  viewport.fitBoundsWithConstraints(
-    new OpenSeadragon.Rect(minX - padX, minY - padY, width + 2 * padX, height + 2 * padY)
+  const unitsPerPixel = Math.max(
+    (width + 2 * padX) / area.width,
+    (height + 2 * padY) / area.height,
+    unitsPerPixelAtZoom(viewport, viewport.getMaxZoom())
   );
+  showCenteredInVisibleArea(viewer, { x: minX + width / 2, y: minY + height / 2 }, unitsPerPixel);
 };
 
 const localeDir = (locale: ContentLocale) => (locale === 'ar' ? 'rtl' : 'ltr');
@@ -217,14 +327,32 @@ const JourneyPreviewContent = ({
   const labels = LABELS[locale];
   const journeyTitle = textBody(journey, locale, 'identifying');
 
+  const stopsRef = useRef<HTMLDivElement>(null);
+  const selectedStop = pois.find((poi) => poi.id === selectedAnnotationId);
+  const selectedStopPoint = selectedStop ? getPoiPoint(selectedStop) : null;
+
   // `pois` is a fresh array on every store update, so the fit below is keyed on the stops'
   // actual positions instead - it only re-runs when another journey is previewed or a stop moves.
+  // Opened on one of its stops (its pin was clicked, or it was scrolled to), the journey keeps
+  // that stop in view rather than zooming out to all of them.
   const points = pois.map(getPoiPoint).filter((point): point is Point => point !== null);
   const pointsKey = points.map(({ x, y }) => `${x},${y}`).join(';');
   useEffect(() => {
-    fitMapToPoints(windowId, points);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- `points` is captured by `pointsKey`
+    if (selectedStopPoint) ensurePointVisible(windowId, selectedStopPoint);
+    else fitMapToPoints(windowId, points);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `points` is captured by `pointsKey`; the selected stop only matters when the journey is (re)framed
   }, [journey.id, pointsKey, windowId]);
+
+  // A stop selected while the journey is already open (its pin clicked, or scrolled to) is
+  // brought out from under this panel, and its card scrolled into view.
+  useEffect(() => {
+    if (!selectedStop) return;
+    if (selectedStopPoint) ensurePointVisible(windowId, selectedStopPoint);
+    Array.from(stopsRef.current?.children ?? [])
+      .find((card) => (card as HTMLElement).dataset.poiId === selectedStop.id)
+      ?.scrollIntoView?.({ behavior: 'smooth', block: 'nearest' });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- re-runs only when another stop is selected
+  }, [selectedStop?.id, windowId]);
 
   const focusPoi = (poi: RawAnnotation) => {
     const point = getPoiPoint(poi);
@@ -235,7 +363,7 @@ const JourneyPreviewContent = ({
 
   return (
     <CompanionWindow id={id} title={journeyTitle || labels.Journey} windowId={windowId}>
-      <div dir={localeDir(locale)} lang={locale} style={{ padding: 16 }}>
+      <div dir={localeDir(locale)} lang={locale} ref={stopsRef} style={{ padding: 16 }}>
         {pois.length === 0 && <p>{labels.noStops}</p>}
         {pois.map((poi, index) => {
           const poiTitle = textBody(poi, locale, 'identifying');
@@ -246,6 +374,7 @@ const JourneyPreviewContent = ({
           return (
             <div
               aria-current={isSelected || undefined}
+              data-poi-id={poi.id}
               key={poi.id}
               onClick={() => focusPoi(poi)}
               onKeyDown={(event) => {
@@ -340,6 +469,13 @@ const PoiPreviewContent = ({
   const description = annotation ? textBody(annotation, locale, 'describing') : '';
   const media = annotation ? mediaForLocale(annotation, locale) : null;
 
+  // The preview panel floats over the map, so the pin it describes may now be behind it.
+  const point = annotation ? getPoiPoint(annotation) : null;
+  useEffect(() => {
+    if (point) ensurePointVisible(windowId, point);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on the pin's position, `point` is a fresh object each render
+  }, [annotation?.id, point?.x, point?.y, windowId]);
+
   return (
     <CompanionWindow id={id} title={title || (kind && labels[kind]) || labels.preview} windowId={windowId}>
       <div dir={localeDir(locale)} lang={locale} style={{ padding: 16 }}>
@@ -427,13 +563,7 @@ const poiPreviewCompanionWindowPlugin = {
     const annotationId = getCompanionWindow(state, { companionWindowId: id })?.annotationid as
       | string
       | undefined;
-    const canvasId = getVisibleCanvases(state, { windowId })[0]?.id;
-    const pages: Record<string, { json?: { items?: unknown[] } }> | undefined = canvasId
-      ? getAnnotations(state)[canvasId]
-      : undefined;
-    const items = (pages ? Object.values(pages) : []).flatMap(
-      (page) => (page.json?.items ?? []) as RawAnnotation[]
-    );
+    const items = getCanvasAnnotationItems(state, windowId);
     const annotation = items.find((item) => item.id === annotationId) ?? null;
     return {
       annotation,
@@ -446,6 +576,65 @@ const poiPreviewCompanionWindowPlugin = {
     };
   },
   mapDispatchToProps: { openNestedMap, selectAnnotation },
+};
+
+type AnnotationPages = Record<string, { json?: { items?: unknown[] } }>;
+
+// The annotation pages of the window's (single) visible canvas - the store's own object, so a
+// stable reference until those annotations change.
+export const getCanvasAnnotationPages = (state: unknown, windowId: string): AnnotationPages | undefined => {
+  const canvasId = getVisibleCanvases(state, { windowId })[0]?.id;
+  return canvasId ? getAnnotations(state)[canvasId] : undefined;
+};
+
+export const annotationPagesItems = (pages: AnnotationPages | undefined): RawAnnotation[] =>
+  (pages ? Object.values(pages) : []).flatMap((page) => (page.json?.items ?? []) as RawAnnotation[]);
+
+// Every annotation on the window's (single) visible canvas, as raw JSON.
+export const getCanvasAnnotationItems = (state: unknown, windowId: string): RawAnnotation[] =>
+  annotationPagesItems(getCanvasAnnotationPages(state, windowId));
+
+// The window's open preview companion window, if any - re-used rather than stacking a new one.
+export const getPreviewCompanionWindowId = (state: unknown, windowId: string): string | undefined =>
+  Object.values(
+    getCompanionWindows(state) as Record<string, { id: string; windowId: string; content: string | null }>
+  ).find((cw) => cw.windowId === windowId && cw.content === POI_PREVIEW_CONTENT_ID)?.id;
+
+// A POI that is a journey's stop is previewed through its journey (with the stop selected), so
+// the visitor sees where it sits in the tour - unless that journey isn't on this canvas.
+export const getPreviewAnnotationId = (
+  annotation: Pick<RawAnnotation, 'id' | 'dbf:kind' | 'dbf:journey'>,
+  hasAnnotation: (id: string) => boolean
+): string => {
+  const journeyId = annotation['dbf:kind'] === 'POI' ? annotation['dbf:journey']?.id : undefined;
+  return journeyId && hasAnnotation(journeyId) ? journeyId : annotation.id;
+};
+
+export interface PreviewDispatchers {
+  addCompanionWindow: typeof addCompanionWindow;
+  updateCompanionWindow: typeof updateCompanionWindow;
+}
+
+// Shows `annotationId` in the window's preview companion window, opening it if needed.
+export const openPreview = (
+  { addCompanionWindow: dispatchAdd, updateCompanionWindow: dispatchUpdate }: PreviewDispatchers,
+  windowId: string,
+  existingPreviewCompanionWindowId: string | undefined,
+  annotationId: string,
+  position: 'bottom' | 'right'
+) => {
+  if (existingPreviewCompanionWindowId) {
+    dispatchUpdate(windowId, existingPreviewCompanionWindowId, { annotationid: annotationId, position });
+  } else {
+    dispatchAdd(windowId, { annotationid: annotationId, content: POI_PREVIEW_CONTENT_ID, position });
+  }
+};
+
+// Issue #410: on a phone-width viewport there's no room for a right-hand rail next to
+// the map, so the POI/journey preview opens as a bottom sheet instead.
+export const usePreviewPosition = (): 'bottom' | 'right' => {
+  const theme = useTheme();
+  return useMediaQuery(theme.breakpoints.down('sm')) ? 'bottom' : 'right';
 };
 
 // A canvas annotation resource, as AnnotationsOverlay's own `annotations`/`searchAnnotations`
@@ -468,6 +657,7 @@ interface AnnotationsOverlayPoiClickWrapperProps {
   targetProps: AnnotationsOverlayTargetProps;
   addCompanionWindow: typeof addCompanionWindow;
   updateCompanionWindow: typeof updateCompanionWindow;
+  annotationPages?: AnnotationPages;
   existingPreviewCompanionWindowId?: string;
 }
 
@@ -476,21 +666,18 @@ interface AnnotationsOverlayPoiClickWrapperProps {
 // clicking a POI marker OR a Journey's own path on the canvas - not just a row in a list
 // somewhere - opens this same preview companion window a "Preview" button would (issue #375's
 // own follow-up: pins on the map itself; issue #378 extends this to journeys). Re-uses an
-// already-open preview window instead of stacking a new one per click.
+// already-open preview window instead of stacking a new one per click. A journey stop's pin
+// opens its journey's preview with that stop selected (see getPreviewAnnotationId).
 const AnnotationsOverlayPoiClickWrapper = ({
   TargetComponent,
   targetProps,
   addCompanionWindow: dispatchAddCompanionWindow,
   updateCompanionWindow: dispatchUpdateCompanionWindow,
+  annotationPages,
   existingPreviewCompanionWindowId,
 }: AnnotationsOverlayPoiClickWrapperProps) => {
   const { annotations = [], searchAnnotations = [], selectAnnotation } = targetProps;
-
-  const theme = useTheme();
-  // Issue #410: on a phone-width viewport there's no room for a right-hand rail next to
-  // the map, so the POI/journey preview opens as a bottom sheet instead.
-  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
-  const previewPosition = isMobile ? 'bottom' : 'right';
+  const previewPosition = usePreviewPosition();
 
   const selectAnnotationAndMaybePreview = (clickedWindowId: string, annotationId: string) => {
     selectAnnotation?.(clickedWindowId, annotationId);
@@ -503,18 +690,18 @@ const AnnotationsOverlayPoiClickWrapper = ({
     // line) - anything else (e.g. a fragmentSelector) has no preview content, skip it.
     if (!resource?.pointSelector && !resource?.svgSelector) return;
 
-    if (existingPreviewCompanionWindowId) {
-      dispatchUpdateCompanionWindow(clickedWindowId, existingPreviewCompanionWindowId, {
-        annotationid: annotationId,
-        position: previewPosition,
-      });
-    } else {
-      dispatchAddCompanionWindow(clickedWindowId, {
-        annotationid: annotationId,
-        content: POI_PREVIEW_CONTENT_ID,
-        position: previewPosition,
-      });
-    }
+    const items = annotationPagesItems(annotationPages);
+    const annotation = items.find((item) => item.id === annotationId);
+    const previewAnnotationId = annotation
+      ? getPreviewAnnotationId(annotation, (id) => items.some((item) => item.id === id))
+      : annotationId;
+    openPreview(
+      { addCompanionWindow: dispatchAddCompanionWindow, updateCompanionWindow: dispatchUpdateCompanionWindow },
+      clickedWindowId,
+      existingPreviewCompanionWindowId,
+      previewAnnotationId,
+      previewPosition
+    );
   };
 
   return <TargetComponent {...targetProps} selectAnnotation={selectAnnotationAndMaybePreview} />;
@@ -524,12 +711,12 @@ const poiPreviewClickPlugin = {
   target: 'AnnotationsOverlay',
   mode: 'wrap',
   component: AnnotationsOverlayPoiClickWrapper,
-  mapStateToProps: (state: unknown, { windowId }: { windowId: string }) => {
-    const existing = Object.values(getCompanionWindows(state) as Record<string, { id: string; windowId: string; content: string | null }>).find(
-      (cw) => cw.windowId === windowId && cw.content === POI_PREVIEW_CONTENT_ID,
-    );
-    return { existingPreviewCompanionWindowId: existing?.id };
-  },
+  mapStateToProps: (state: unknown, { windowId }: { windowId: string }) => ({
+    // The raw pages rather than their flattened items, which would be a new array (and so a
+    // re-render of the whole overlay) on every store update.
+    annotationPages: getCanvasAnnotationPages(state, windowId),
+    existingPreviewCompanionWindowId: getPreviewCompanionWindowId(state, windowId),
+  }),
   mapDispatchToProps: { addCompanionWindow, updateCompanionWindow },
 };
 

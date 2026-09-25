@@ -4,6 +4,7 @@ import { viewer } from '../init';
 import { updateConfig } from '../state/actions/config';
 import { poiPreviewPlugins } from '../plugins/poiPreviewPlugin.tsx';
 import { nestedMapPlugins } from '../plugins/nestedMapPlugin.tsx';
+import { mapInteractionPlugins } from '../plugins/mapInteractionPlugin.tsx';
 
 // Hides Mirador's generic multi-window IIIF-viewer chrome (top bar, workspace controls,
 // canvas panel) so a manifest reads as a single interactive map rather than a document
@@ -86,6 +87,10 @@ export const MAP_VIEWER_LANGUAGES = ['en', 'ar'];
  * of the current one with a "Back" button. The linked map's manifest URL comes from the
  * annotation (`dbf:linkedMap.manifestId`); `getLinkedMapManifestId` is only needed for
  * annotations that don't carry it, turning their linked map (`{ id }`) into a manifest URL.
+ *
+ * The mouse wheel tours the map's POIs (in their `dbf:order`, journeys unrolled into their
+ * stops) instead of zooming - see mapInteractionPlugin.tsx. Pinch-to-zoom and the zoom
+ * controls still zoom.
  */
 export function MapViewer({ getLinkedMapManifestId = undefined, lang = 'en', manifestId }) {
   const baseId = useId().replace(/:/g, '');
@@ -122,7 +127,7 @@ export function MapViewer({ getLinkedMapManifestId = undefined, lang = 'en', man
         },
         windows: [{ manifestId }],
       },
-      [...poiPreviewPlugins, ...nestedMapPlugins],
+      [...poiPreviewPlugins, ...nestedMapPlugins, ...mapInteractionPlugins],
     );
     instanceRef.current = instance;
 

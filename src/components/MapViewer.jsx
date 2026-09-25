@@ -89,8 +89,8 @@ export const MAP_VIEWER_LANGUAGES = ['en', 'ar'];
  * annotations that don't carry it, turning their linked map (`{ id }`) into a manifest URL.
  *
  * The mouse wheel tours the map's POIs (in their `dbf:order`, journeys unrolled into their
- * stops) instead of zooming - see mapInteractionPlugin.tsx. Pinch-to-zoom and the zoom
- * controls still zoom.
+ * stops) instead of zooming - see mapInteractionPlugin.tsx. Shift+wheel, pinch-to-zoom and
+ * the zoom controls still zoom.
  */
 export function MapViewer({ getLinkedMapManifestId = undefined, lang = 'en', manifestId }) {
   const baseId = useId().replace(/:/g, '');

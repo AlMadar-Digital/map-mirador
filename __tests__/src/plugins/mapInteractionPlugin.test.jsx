@@ -79,12 +79,26 @@ describe('mapInteractionPlugin wheel handling', () => {
       handler = fn;
     },
     removeHandler: vi.fn(),
+    viewport: {
+      applyConstraints: vi.fn(),
+      pointFromPixel: ({ x, y }) => ({ viewportX: x, viewportY: y }),
+      zoomBy: vi.fn(),
+    },
+    zoomPerScroll: 2,
   };
 
-  /** Fires a canvas-scroll event, returning it */
-  const scroll = (amount, { ctrlKey = false, after = 1000 } = {}) => {
+  /**
+   * Fires a canvas-scroll event, returning it. `amount` is OpenSeadragon's scroll direction
+   * (positive for a wheel pushed away); the DOM event's deltaY is its opposite unless given.
+   */
+  const scroll = (amount, { ctrlKey = false, shiftKey = false, deltaX = 0, deltaY = -amount, after = 1000 } = {}) => {
     now += after;
-    const event = { originalEvent: { ctrlKey }, preventDefaultAction: false, scroll: amount };
+    const event = {
+      originalEvent: { ctrlKey, deltaX, deltaY, shiftKey },
+      position: { x: 10, y: 20 },
+      preventDefaultAction: false,
+      scroll: amount,
+    };
     handler(event);
     return event;
   };
@@ -105,6 +119,7 @@ describe('mapInteractionPlugin wheel handling', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.clearAllMocks();
   });
 
   it('opens the first POI on the first scroll instead of zooming', () => {
@@ -153,6 +168,35 @@ describe('mapInteractionPlugin wheel handling', () => {
     const event = scroll(-1, { ctrlKey: true });
 
     expect(event.preventDefaultAction).toBe(false);
+    expect(props.selectAnnotation).not.toHaveBeenCalled();
+  });
+
+  it('zooms around the pointer on shift+wheel instead of touring', () => {
+    render(<Wrapper {...props} />);
+
+    const event = scroll(1, { shiftKey: true });
+    scroll(-1, { after: 10, shiftKey: true });
+
+    expect(event.preventDefaultAction).toBe(true);
+    expect(viewer.viewport.zoomBy).toHaveBeenNthCalledWith(1, 2, { viewportX: 10, viewportY: 20 });
+    expect(viewer.viewport.zoomBy).toHaveBeenNthCalledWith(2, 0.5, expect.anything());
+    expect(props.selectAnnotation).not.toHaveBeenCalled();
+  });
+
+  it('zooms on shift+wheel when the browser turns it into a horizontal scroll', () => {
+    render(<Wrapper {...props} />);
+
+    scroll(0, { deltaX: -100, deltaY: 0, shiftKey: true });
+
+    expect(viewer.viewport.zoomBy).toHaveBeenCalledWith(2, expect.anything());
+  });
+
+  it('ignores a sideways-only swipe', () => {
+    render(<Wrapper {...props} />);
+
+    const event = scroll(0, { deltaX: 100, deltaY: 0 });
+
+    expect(event.preventDefaultAction).toBe(true);
     expect(props.selectAnnotation).not.toHaveBeenCalled();
   });
 });

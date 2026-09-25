@@ -20,6 +20,7 @@ import {
 // Map "tour" interactions for MapViewer's rendering mode (issue #434): the mouse wheel steps
 // through the map's POIs one at a time instead of zooming - each step selects the POI, opens
 // its preview (its journey's, with it selected, for a journey stop) and focuses the map on it.
+// Shift+wheel zooms instead, as does a trackpad pinch.
 // Only for the public viewer: in the Strapi editor the wheel has to keep zooming, so this
 // isn't part of poiPreviewPlugins, and MapViewer registers it on its own.
 
@@ -97,12 +98,35 @@ const WHEEL_GESTURE_GAP_MS = 250;
 
 type CanvasScrollEvent = {
   originalEvent?: WheelEvent;
+  position?: { x: number; y: number };
   preventDefaultAction?: boolean;
   scroll: number;
 };
 type OsdViewerLike = {
   addHandler: (name: 'canvas-scroll', handler: (event: CanvasScrollEvent) => void) => void;
   removeHandler: (name: 'canvas-scroll', handler: (event: CanvasScrollEvent) => void) => void;
+  viewport?: {
+    applyConstraints: () => void;
+    pointFromPixel: (pixel: { x: number; y: number }, current?: boolean) => unknown;
+    zoomBy: (factor: number, refPoint?: unknown) => void;
+  };
+  zoomPerScroll?: number;
+};
+
+// OpenSeadragon's own default zoom step per wheel notch, for a viewer that doesn't say.
+const DEFAULT_ZOOM_PER_SCROLL = 1.2;
+
+// Shift+wheel zooms around the pointer, the way the wheel alone does in plain OpenSeadragon.
+// Done here rather than left to OpenSeadragon, which reads only a wheel event's vertical delta:
+// Chrome and Edge (outside macOS) turn a shift+wheel into a horizontal scroll, which
+// OpenSeadragon would see as no scroll at all.
+const zoomAtPointer = (viewer: OsdViewerLike, event: CanvasScrollEvent) => {
+  const { viewport } = viewer;
+  const delta = event.originalEvent ? event.originalEvent.deltaY || event.originalEvent.deltaX : -event.scroll;
+  if (!viewport || !delta) return;
+  const factor = (viewer.zoomPerScroll ?? DEFAULT_ZOOM_PER_SCROLL) ** (delta < 0 ? 1 : -1);
+  viewport.zoomBy(factor, event.position ? viewport.pointFromPixel(event.position, true) : undefined);
+  viewport.applyConstraints();
 };
 
 interface AnnotationsOverlayTourWrapperProps {
@@ -160,6 +184,12 @@ const AnnotationsOverlayTourWrapper = ({
       if (event.originalEvent?.ctrlKey) return;
       // eslint-disable-next-line no-param-reassign -- OpenSeadragon's own opt-out of its scroll-to-zoom
       event.preventDefaultAction = true;
+      if (event.originalEvent?.shiftKey) {
+        zoomAtPointer(viewer, event);
+        return;
+      }
+      // A sideways-only swipe (a trackpad's horizontal scroll) has no direction to tour in.
+      if (!event.scroll) return;
 
       const now = Date.now();
       const isNewGesture = now - lastWheelAt > WHEEL_GESTURE_GAP_MS;

@@ -1,13 +1,24 @@
-import { useId, useState, type ComponentType } from 'react';
+import { useEffect, useId, useRef, useState, type ComponentType } from 'react';
 import {
   OSDReferences,
+  addCompanionWindow,
   getCompanionWindow,
   getConfig,
   getRequiredStatement,
   getRights,
+  updateCompanionWindow,
   // Relative, as in poiPreviewPlugin.tsx: this file lives inside the dbf-mirador package.
 } from '../index';
-import { getContentLocale, getPreviewCompanionWindowId, sanitizeDescription, type ContentLocale } from './poiPreviewPlugin';
+import {
+  MAP_INFO_ID,
+  getContentLocale,
+  getMapInfo,
+  getPreviewCompanionWindowId,
+  openPreview,
+  sanitizeDescription,
+  usePreviewPosition,
+  type ContentLocale,
+} from './poiPreviewPlugin';
 import { setPanelCollapsed, usePanelCollapsed } from './sitePanelState';
 
 // The site preset's map tools (Figma "map sidepanel" toolbars): the tab that hides and shows the
@@ -40,8 +51,13 @@ type RequiredStatement = { label: string | null; values: string[] }[];
 interface SiteMapToolsProps {
   TargetComponent: ComponentType<Record<string, unknown>>;
   targetProps: { windowId: string; [key: string]: unknown };
+  addCompanionWindow: typeof addCompanionWindow;
+  hasMapInfo: boolean;
   locale: ContentLocale;
   panelPosition: 'right' | 'bottom' | null;
+  previewAnnotationId: string | null;
+  previewId: string | null;
+  updateCompanionWindow: typeof updateCompanionWindow;
   requiredStatement: RequiredStatement;
   rights: string[];
   site: boolean;
@@ -50,16 +66,43 @@ interface SiteMapToolsProps {
 const SiteMapTools = ({
   TargetComponent,
   targetProps,
+  addCompanionWindow: dispatchAddCompanionWindow,
+  hasMapInfo,
   locale,
   panelPosition,
+  previewAnnotationId,
+  previewId,
   requiredStatement,
   rights,
   site,
+  updateCompanionWindow: dispatchUpdateCompanionWindow,
 }: SiteMapToolsProps) => {
   const { windowId } = targetProps;
   const collapsed = usePanelCollapsed(windowId);
   const [showRights, setShowRights] = useState(false);
   const rightsId = useId();
+  const previewPosition = usePreviewPosition();
+
+  const openMapInfo = () => {
+    setPanelCollapsed(windowId, false);
+    openPreview(
+      { addCompanionWindow: dispatchAddCompanionWindow, updateCompanionWindow: dispatchUpdateCompanionWindow },
+      windowId,
+      previewId ?? undefined,
+      MAP_INFO_ID,
+      previewPosition
+    );
+  };
+
+  // "Discover the map" opens with the view, once the manifest has a title or description to
+  // show (D11).
+  const openedMapInfoRef = useRef(false);
+  useEffect(() => {
+    if (!site || !hasMapInfo || previewId || openedMapInfoRef.current) return;
+    openedMapInfoRef.current = true;
+    openMapInfo();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once, when the map's info first arrives
+  }, [site, hasMapInfo, previewId]);
 
   if (!site) return <TargetComponent {...targetProps} />;
 
@@ -83,6 +126,16 @@ const SiteMapTools = ({
           aria-label={collapsed ? labels.expand : labels.collapse}
           className="dbf-map-panel__toggle"
           onClick={() => setPanelCollapsed(windowId, !collapsed)}
+          type="button"
+        />
+      )}
+      {/* With no panel open, the tab opens "Discover the map". */}
+      {!panelPosition && hasMapInfo && previewPosition === 'right' && (
+        <button
+          aria-expanded={false}
+          aria-label={labels.expand}
+          className="dbf-map-panel__toggle"
+          onClick={openMapInfo}
           type="button"
         />
       )}
@@ -137,17 +190,25 @@ export const siteMapToolsPlugin = {
   mapStateToProps: (state: unknown, { windowId }: { windowId: string }) => {
     const config = getConfig(state) as { language?: string; maps?: { site?: boolean } };
     const previewId = getPreviewCompanionWindowId(state, windowId);
-    const position = previewId
-      ? (getCompanionWindow(state, { companionWindowId: previewId })?.position as string | undefined)
+    const preview = previewId
+      ? (getCompanionWindow(state, { companionWindowId: previewId }) as
+          | { annotationid?: string; position?: string }
+          | undefined)
       : undefined;
+    const position = preview?.position;
+    const locale = getContentLocale(config.language);
     return {
-      locale: getContentLocale(config.language),
+      hasMapInfo: getMapInfo(state, windowId, locale) !== null,
+      locale,
       panelPosition: position === 'right' || position === 'bottom' ? position : null,
+      previewAnnotationId: preview?.annotationid ?? null,
+      previewId: previewId ?? null,
       requiredStatement: (getRequiredStatement(state, { windowId }) ?? []) as RequiredStatement,
       rights: (getRights(state, { windowId }) ?? []) as string[],
       site: config.maps?.site === true,
     };
   },
+  mapDispatchToProps: { addCompanionWindow, updateCompanionWindow },
 };
 
 export const siteMapToolsPlugins = [siteMapToolsPlugin];

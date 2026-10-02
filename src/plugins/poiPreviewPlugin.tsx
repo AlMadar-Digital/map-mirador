@@ -14,6 +14,7 @@ import {
   getCompanionWindow,
   getCompanionWindows,
   getConfig,
+  getManifest,
   getSelectedAnnotationId,
   getVisibleCanvases,
   removeCompanionWindow,
@@ -25,7 +26,7 @@ import {
   // resolve against during local dev.
 } from '../index';
 import { getLinkedMapManifestId, openNestedMap, type LinkedMap } from './nestedMapPlugin';
-import { setPanelCollapsed, usePanelCollapsed } from './sitePanelState';
+import { setPanelCollapsed, useMinimiseOnFirstInteraction, usePanelCollapsed } from './sitePanelState';
 import { readLineStyle, useSitePins, type PinResource } from './sitePins';
 
 // A "dumb" way to preview a POI/journey (issue #375): a Mirador companion window plugin,
@@ -97,6 +98,8 @@ const LABELS: Record<ContentLocale, Record<string, string>> = {
     notFound: 'تعذر العثور على هذا العنصر - ربما تم حذفه.',
     openMap: 'فتح الخريطة',
     closePanel: 'إغلاق اللوحة',
+    collapse: 'إخفاء اللوحة',
+    expand: 'إظهار اللوحة',
     discover: 'اكتشف الخريطة',
     followJourney: 'اتبع الرحلة',
     preview: 'معاينة',
@@ -109,6 +112,8 @@ const LABELS: Record<ContentLocale, Record<string, string>> = {
     notFound: 'This annotation could not be found - it may have been deleted.',
     openMap: 'Open map',
     closePanel: 'Close panel',
+    collapse: 'Hide panel',
+    expand: 'Show panel',
     discover: 'Discover the map',
     followJourney: 'Follow the journey',
     preview: 'Preview',
@@ -147,6 +152,46 @@ const textBody = (
 
 const mediaForLocale = (annotation: RawAnnotation, locale: ContentLocale): DbfMedia | null | undefined =>
   locale === 'en' ? annotation['dbf:mediaEn'] : annotation['dbf:mediaAr'];
+
+const IMAGE_FILE = /\.(avif|gif|jpe?g|png|svg|webp)$/i;
+
+// The image to show for a POI's media, if it has one. A Media Library upload's
+// `thumbnailUrl` is the uploaded file itself, which may be audio, video or a PDF - only an
+// image file is shown as one. IIIF Images and Media Items always carry an image thumbnail.
+export const mediaImageUrl = (media: DbfMedia | null | undefined): string | null => {
+  const url = media?.thumbnailUrl;
+  if (!url) return null;
+  if (media.source !== 'upload') return url;
+  try {
+    return IMAGE_FILE.test(new URL(url, 'http://localhost').pathname) ? url : null;
+  } catch {
+    return null;
+  }
+};
+
+// The preview companion window shows the map itself (its title and description) when it is
+// opened on this id rather than an annotation's: the site preset's "Discover the map" panel.
+export const MAP_INFO_ID = 'dbf:map-info';
+
+type LanguageMap = Record<string, string[] | string | undefined> | string | null | undefined;
+
+// A IIIF language map's text in the content locale, falling back to `none`, then any language.
+const languageMapText = (value: LanguageMap, locale: ContentLocale): string => {
+  if (!value) return '';
+  if (typeof value === 'string') return value;
+  const entry = value[locale] ?? value.none ?? Object.values(value).find(Boolean);
+  return (Array.isArray(entry) ? entry.join(' ') : entry ?? '').trim();
+};
+
+export type MapInfo = { summary: string; title: string };
+
+// The map's own title and description, from its manifest's `label` and `summary`.
+export const getMapInfo = (state: unknown, windowId: string, locale: ContentLocale): MapInfo | null => {
+  const json = (getManifest(state, { windowId }) as { json?: { label?: LanguageMap; summary?: LanguageMap } })?.json;
+  const title = languageMapText(json?.label, locale);
+  const summary = languageMapText(json?.summary, locale);
+  return title || summary ? { summary, title } : null;
+};
 
 // A journey's ordered stops, derived the same way the rest of the codebase does: every
 // POI whose `dbf:journey.id` points at this journey, sorted by `dbf:journey.order`.
@@ -403,7 +448,15 @@ const SitePanel = ({
         lang={locale}
       >
         <div className="dbf-map-panel__header">
-          <span aria-hidden className="dbf-map-panel__handle" />
+          {position === 'bottom' && (
+            <button
+              aria-expanded={!collapsed}
+              aria-label={collapsed ? LABELS[locale].expand : LABELS[locale].collapse}
+              className="dbf-map-panel__handle"
+              onClick={() => setPanelCollapsed(windowId, !collapsed)}
+              type="button"
+            />
+          )}
           <h2 className="dbf-map-panel__label">{label}</h2>
           <button
             aria-label={LABELS[locale].closePanel}
@@ -554,9 +607,9 @@ const JourneyPreviewContent = ({
                     </h3>
                   </div>
                 </div>
-                {media?.thumbnailUrl && (
+                {mediaImageUrl(media) && (
                   <div className="dbf-map-poi__media">
-                    <img alt={media.title ?? ''} src={media.thumbnailUrl} />
+                    <img alt={media?.title ?? ''} src={mediaImageUrl(media) ?? undefined} />
                   </div>
                 )}
                 {description && (
@@ -641,10 +694,10 @@ const JourneyPreviewContent = ({
               </div>
               <div style={{ flex: 1, paddingBottom: isLast ? 0 : 24 }}>
                 <h3 style={{ margin: '0 0 8px' }}>{poiTitle || '—'}</h3>
-                {media?.thumbnailUrl && (
+                {mediaImageUrl(media) && (
                   <img
-                    alt={media.title ?? ''}
-                    src={media.thumbnailUrl}
+                    alt={media?.title ?? ''}
+                    src={mediaImageUrl(media) ?? undefined}
                     style={{ borderRadius: 8, marginBottom: 8, maxWidth: '100%' }}
                   />
                 )}
@@ -719,9 +772,9 @@ const PoiPreviewContent = ({
                 <h3 className="dbf-map-poi__title">{title || labels.POI}</h3>
               </div>
             </div>
-            {media?.thumbnailUrl && (
+            {mediaImageUrl(media) && (
               <div className="dbf-map-poi__media">
-                <img alt={media.title ?? ''} src={media.thumbnailUrl} />
+                <img alt={media?.title ?? ''} src={mediaImageUrl(media) ?? undefined} />
               </div>
             )}
             {description && (
@@ -752,8 +805,8 @@ const PoiPreviewContent = ({
           <div dangerouslySetInnerHTML={{ __html: description }} />
         )}
         {media &&
-          (media.thumbnailUrl ? (
-            <img alt={media.title ?? ''} src={media.thumbnailUrl} style={{ maxWidth: '100%' }} />
+          (mediaImageUrl(media) ? (
+            <img alt={media.title ?? ''} src={mediaImageUrl(media) ?? undefined} style={{ maxWidth: '100%' }} />
           ) : (
             <p>
               {media.title}
@@ -775,12 +828,57 @@ const PoiPreviewContent = ({
   );
 };
 
+interface MapInfoContentProps {
+  id: string;
+  locale: ContentLocale;
+  mapInfo: MapInfo;
+  position: PanelPosition;
+  removeCompanionWindow: typeof removeCompanionWindow;
+  windowId: string;
+}
+
+// "Discover the map": the map's own title and description, shown while no POI is selected.
+const MapInfoContent = ({
+  id,
+  locale,
+  mapInfo,
+  position,
+  removeCompanionWindow: dispatchRemoveCompanionWindow,
+  windowId,
+}: MapInfoContentProps) => {
+  const summary = sanitizeDescription(mapInfo.summary);
+  return (
+    <SitePanel
+      id={id}
+      label={LABELS[locale].discover}
+      locale={locale}
+      position={position}
+      removeCompanionWindow={dispatchRemoveCompanionWindow}
+      showing={MAP_INFO_ID}
+      windowId={windowId}
+    >
+      <article className="dbf-map-poi" data-variant="map">
+        <div className="dbf-map-poi__header">
+          <div className="dbf-map-poi__heading">
+            <h3 className="dbf-map-poi__title">{mapInfo.title}</h3>
+          </div>
+        </div>
+        {summary && (
+          // eslint-disable-next-line react/no-danger -- sanitised above
+          <div className="dbf-map-poi__text" dangerouslySetInnerHTML={{ __html: summary }} />
+        )}
+      </article>
+    </SitePanel>
+  );
+};
+
 interface PreviewContentProps {
   annotation: RawAnnotation | null;
   id: string;
   journeyPois: RawAnnotation[];
   linkedMapManifestId: string | null;
   locale: ContentLocale;
+  mapInfo?: MapInfo | null;
   openNestedMap: (windowId: string, manifestId: string) => void;
   position: PanelPosition;
   removeCompanionWindow: typeof removeCompanionWindow;
@@ -796,6 +894,7 @@ const PreviewContent = ({
   journeyPois,
   linkedMapManifestId,
   locale,
+  mapInfo = null,
   openNestedMap: dispatchOpenNestedMap,
   position,
   removeCompanionWindow: dispatchRemoveCompanionWindow,
@@ -804,6 +903,18 @@ const PreviewContent = ({
   site,
   windowId,
 }: PreviewContentProps) => {
+  if (site && mapInfo) {
+    return (
+      <MapInfoContent
+        id={id}
+        locale={locale}
+        mapInfo={mapInfo}
+        position={position}
+        removeCompanionWindow={dispatchRemoveCompanionWindow}
+        windowId={windowId}
+      />
+    );
+  }
   if (annotation && annotation['dbf:kind'] === 'Journey') {
     return (
       <JourneyPreviewContent
@@ -845,13 +956,15 @@ const poiPreviewCompanionWindowPlugin = {
     const annotationId = companionWindow?.annotationid;
     const items = getCanvasAnnotationItems(state, windowId);
     const annotation = items.find((item) => item.id === annotationId) ?? null;
+    const locale = getContentLocale((getConfig(state) as { language?: string }).language);
     return {
       annotation,
       journeyPois:
         annotation && annotation['dbf:kind'] === 'Journey' ? getOrderedJourneyPois(items, annotation.id) : [],
       // Only a Nested Map point whose map the host can resolve gets an "Open map" button.
       linkedMapManifestId: getLinkedMapManifestId(state, annotation?.['dbf:linkedMap']),
-      locale: getContentLocale((getConfig(state) as { language?: string }).language),
+      locale,
+      mapInfo: annotationId === MAP_INFO_ID ? getMapInfo(state, windowId, locale) : null,
       position: companionWindow?.position === 'bottom' ? 'bottom' : 'right',
       selectedAnnotationId: getSelectedAnnotationId(state, { windowId }) as string | undefined,
       // MapViewer's site preset renders the site's markup; the annotation editor never sets it.
@@ -946,6 +1059,7 @@ interface AnnotationsOverlayPoiClickWrapperProps {
   annotationPages?: AnnotationPages;
   existingPreviewCompanionWindowId?: string;
   locale?: ContentLocale;
+  previewShowsMapInfo?: boolean;
   site?: boolean;
 }
 
@@ -964,6 +1078,7 @@ const AnnotationsOverlayPoiClickWrapper = ({
   annotationPages,
   existingPreviewCompanionWindowId,
   locale = 'en',
+  previewShowsMapInfo = false,
   site = false,
 }: AnnotationsOverlayPoiClickWrapperProps) => {
   const { annotations = [], searchAnnotations = [], selectAnnotation } = targetProps;
@@ -1015,6 +1130,12 @@ const AnnotationsOverlayPoiClickWrapper = ({
     selectedAnnotationId: targetProps.selectedAnnotationId,
     viewer: targetProps.viewer,
   });
+  useMinimiseOnFirstInteraction(
+    targetProps.viewer as Parameters<typeof useMinimiseOnFirstInteraction>[0],
+    targetProps.windowId,
+    site,
+    previewShowsMapInfo
+  );
   const lineStyleKey = site ? JSON.stringify(readLineStyle(targetProps.viewer?.element)) : 'null';
   const lineStyle = useMemo(() => JSON.parse(lineStyleKey), [lineStyleKey]);
 
@@ -1045,6 +1166,10 @@ const poiPreviewClickPlugin = {
     // re-render of the whole overlay) on every store update.
     annotationPages: getCanvasAnnotationPages(state, windowId),
     existingPreviewCompanionWindowId: getPreviewCompanionWindowId(state, windowId),
+    previewShowsMapInfo:
+      (getCompanionWindow(state, { companionWindowId: getPreviewCompanionWindowId(state, windowId) }) as
+        | { annotationid?: string }
+        | undefined)?.annotationid === MAP_INFO_ID,
     locale: getContentLocale((getConfig(state) as { language?: string }).language),
     site: (getConfig(state) as { maps?: { site?: boolean } }).maps?.site === true,
   }),

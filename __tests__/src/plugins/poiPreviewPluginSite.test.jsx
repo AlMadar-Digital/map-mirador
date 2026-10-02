@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import PropTypes from 'prop-types';
-import { poiPreviewPlugins } from '../../../src/plugins/poiPreviewPlugin.tsx';
+import { MAP_INFO_ID, mediaImageUrl, poiPreviewPlugins } from '../../../src/plugins/poiPreviewPlugin.tsx';
 
 // Only the preview's own content is under test here, not Mirador's companion window chrome.
 vi.mock('../../../src/index', async (importOriginal) => {
@@ -123,6 +123,63 @@ describe('poiPreviewPlugin site preset', () => {
       await userEvent.click(screen.getByRole('button', { name: 'إغلاق اللوحة' }));
 
       expect(removeCompanionWindow).toHaveBeenCalledWith('window', 'cw');
+    });
+  });
+
+  describe('Discover the map', () => {
+    it('shows the map title and description', () => {
+      const { container } = render(
+        <PreviewContent
+          annotation={null}
+          id="cw"
+          journeyPois={[]}
+          locale="en"
+          mapInfo={{ summary: '<p>Charts the <i>Nile</i>.</p>', title: 'Map of the Nile' }}
+          position="bottom"
+          removeCompanionWindow={vi.fn()}
+          selectAnnotation={vi.fn()}
+          site
+          windowId="window"
+        />,
+      );
+
+      expect(screen.getByRole('heading', { level: 2, name: 'Discover the map' })).toBeInTheDocument();
+      expect(screen.getByRole('heading', { level: 3, name: 'Map of the Nile' })).toBeInTheDocument();
+      // eslint-disable-next-line testing-library/no-container, testing-library/no-node-access -- the class name is the contract
+      expect(container.querySelector('.dbf-map-poi[data-variant="map"] .dbf-map-poi__text')).toHaveTextContent(
+        'Charts the Nile.',
+      );
+    });
+
+    it('is the preview of the map-info id', () => {
+      const state = {
+        annotations: {},
+        companionWindows: { cw: { annotationid: MAP_INFO_ID, position: 'right' } },
+        config: { language: 'ar', maps: { site: true } },
+        manifests: {
+          m: { json: { label: { ar: ['خريطة النيل'], en: ['Map of the Nile'] }, summary: { en: ['<p>Nile</p>'] } } },
+        },
+        windows: { window: { manifestId: 'm' } },
+      };
+
+      expect(mapStateToProps(state, { id: 'cw', windowId: 'window' }).mapInfo).toEqual({
+        summary: '<p>Nile</p>',
+        title: 'خريطة النيل',
+      });
+    });
+  });
+
+  describe('mediaImageUrl', () => {
+    it('shows uploaded images, IIIF images and Media Item thumbnails, not uploaded audio', () => {
+      expect(mediaImageUrl({ source: 'upload', thumbnailUrl: 'https://cdn/x/photo.JPG' })).toBe('https://cdn/x/photo.JPG');
+      expect(mediaImageUrl({ source: 'upload', thumbnailUrl: 'https://cdn/x/sound.mp3' })).toBeNull();
+      expect(mediaImageUrl({ source: 'iiif-image', thumbnailUrl: 'https://iiif/full/400,/0/default.jpg' })).toBe(
+        'https://iiif/full/400,/0/default.jpg',
+      );
+      expect(mediaImageUrl({ source: 'media-item', thumbnailUrl: 'https://img.youtube.com/vi/a/mqdefault.jpg' })).toBe(
+        'https://img.youtube.com/vi/a/mqdefault.jpg',
+      );
+      expect(mediaImageUrl(null)).toBeNull();
     });
   });
 

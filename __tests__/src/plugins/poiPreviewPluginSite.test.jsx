@@ -6,16 +6,17 @@ import { poiPreviewPlugins } from '../../../src/plugins/poiPreviewPlugin.tsx';
 // Only the preview's own content is under test here, not Mirador's companion window chrome.
 vi.mock('../../../src/index', async (importOriginal) => {
   /** Stand-in for the connected CompanionWindow: just its title and content */
-  function CompanionWindowStub({ children = null, title }) {
+  function CompanionWindowStub({ children = null, header = true, title }) {
     return (
       <section aria-label={title}>
-        <h2>{title}</h2>
+        {header && <h2>{title}</h2>}
         {children}
       </section>
     );
   }
   CompanionWindowStub.propTypes = { children: PropTypes.node, title: PropTypes.string.isRequired };
 
+  CompanionWindowStub.propTypes.header = PropTypes.bool;
   return { ...(await importOriginal()), ConnectedCompanionWindow: CompanionWindowStub };
 });
 
@@ -59,6 +60,8 @@ describe('poiPreviewPlugin site preset', () => {
           id="cw"
           journeyPois={pois}
           locale="en"
+          position="right"
+          removeCompanionWindow={vi.fn()}
           selectAnnotation={vi.fn()}
           site
           windowId="window"
@@ -69,7 +72,7 @@ describe('poiPreviewPlugin site preset', () => {
       /* eslint-disable testing-library/no-container, testing-library/no-node-access -- the class names are the contract */
       const cards = container.querySelectorAll('.dbf-map-poi');
       expect(cards).toHaveLength(2);
-      expect(cards[1].querySelector('.dbf-map-poi__number')).toHaveTextContent('2');
+      expect(cards[1].querySelector('.dbf-map-poi__marker')).toHaveTextContent('2');
       expect(cards[1].querySelector('.dbf-map-poi__eyebrow')).toHaveTextContent('A journey to the coast');
       expect(container.querySelectorAll('.dbf-map-poi__divider')).toHaveLength(1);
       expect(container.querySelector('[style]:not([aria-hidden])')).toBeNull();
@@ -84,6 +87,8 @@ describe('poiPreviewPlugin site preset', () => {
           id="cw"
           journeyPois={pois}
           locale="en"
+          position="right"
+          removeCompanionWindow={vi.fn()}
           selectAnnotation={selectAnnotation}
           site
           windowId="window"
@@ -96,6 +101,31 @@ describe('poiPreviewPlugin site preset', () => {
     });
   });
 
+  describe('panel', () => {
+    it("replaces Mirador's title bar with its own label and close button", async () => {
+      const removeCompanionWindow = vi.fn();
+      render(
+        <PreviewContent
+          annotation={journey}
+          id="cw"
+          journeyPois={[stop('a', 'The Start', 1)]}
+          locale="ar"
+          position="bottom"
+          removeCompanionWindow={removeCompanionWindow}
+          selectAnnotation={vi.fn()}
+          site
+          windowId="window"
+        />,
+      );
+
+      expect(screen.getAllByRole('heading', { level: 2 })).toHaveLength(1);
+      expect(screen.getByRole('heading', { level: 2, name: 'اتبع الرحلة' })).toBeInTheDocument();
+      await userEvent.click(screen.getByRole('button', { name: 'إغلاق اللوحة' }));
+
+      expect(removeCompanionWindow).toHaveBeenCalledWith('window', 'cw');
+    });
+  });
+
   describe('POI', () => {
     it('renders a card under the Discover heading', () => {
       const { container } = render(
@@ -104,6 +134,8 @@ describe('poiPreviewPlugin site preset', () => {
           id="cw"
           journeyPois={[]}
           locale="en"
+          position="right"
+          removeCompanionWindow={vi.fn()}
           selectAnnotation={vi.fn()}
           site
           windowId="window"

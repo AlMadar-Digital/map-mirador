@@ -5,6 +5,7 @@ import { updateConfig } from '../state/actions/config';
 import { poiPreviewPlugins } from '../plugins/poiPreviewPlugin.tsx';
 import { nestedMapPlugins } from '../plugins/nestedMapPlugin.tsx';
 import { mapInteractionPlugins } from '../plugins/mapInteractionPlugin.tsx';
+import { siteMapToolsPlugins } from '../plugins/siteMapToolsPlugin.tsx';
 
 // Hides Mirador's generic multi-window IIIF-viewer chrome (top bar, workspace controls,
 // canvas panel) so a manifest reads as a single interactive map rather than a document
@@ -63,8 +64,10 @@ export const defaultMapViewerConfig = {
     // instead. `highlightAllAnnotations` still draws markers on the canvas regardless.
     sideBarOpenByDefault: false,
     highlightAllAnnotations: true,
-    // The site's preview panel is 480px wide (Figma 2843:43435).
+    // The site's preview panel is 480px wide (Figma 2843:43435); on a phone it is a 310px
+    // bottom sheet (2843:43867).
     defaultSidebarPanelWidth: 480,
+    defaultSidebarPanelHeight: 310,
     panels: {
       canvas: false,
     },
@@ -138,7 +141,7 @@ export function MapViewer({ getLinkedMapManifestId = undefined, lang = 'en', man
         },
         windows: [{ manifestId }],
       },
-      [...poiPreviewPlugins, ...nestedMapPlugins, ...mapInteractionPlugins],
+      [...poiPreviewPlugins, ...nestedMapPlugins, ...mapInteractionPlugins, ...siteMapToolsPlugins],
     );
     instanceRef.current = instance;
 

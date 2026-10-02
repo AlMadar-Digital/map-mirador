@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ComponentType } from 'react';
+import { useEffect, useRef, type ComponentType, type ReactNode } from 'react';
 import DOMPurify from 'dompurify';
 import Button from '@mui/material/Button';
 import MapIcon from '@mui/icons-material/MapSharp';
@@ -16,6 +16,7 @@ import {
   getConfig,
   getSelectedAnnotationId,
   getVisibleCanvases,
+  removeCompanionWindow,
   selectAnnotation,
   updateCompanionWindow,
   // Relative, not `from 'dbf-mirador'`: this file lives inside the dbf-mirador package
@@ -24,6 +25,7 @@ import {
   // resolve against during local dev.
 } from '../index';
 import { getLinkedMapManifestId, openNestedMap, type LinkedMap } from './nestedMapPlugin';
+import { setPanelCollapsed, usePanelCollapsed } from './sitePanelState';
 
 // A "dumb" way to preview a POI/journey (issue #375): a Mirador companion window plugin,
 // registered alongside dbf-mirador-annotation-editor's own (see MiradorMaeViewer.tsx) via
@@ -93,6 +95,7 @@ const LABELS: Record<ContentLocale, Record<string, string>> = {
     noStops: 'لا توجد محطات في هذه الرحلة بعد.',
     notFound: 'تعذر العثور على هذا العنصر - ربما تم حذفه.',
     openMap: 'فتح الخريطة',
+    closePanel: 'إغلاق اللوحة',
     discover: 'اكتشف الخريطة',
     followJourney: 'اتبع الرحلة',
     preview: 'معاينة',
@@ -104,6 +107,7 @@ const LABELS: Record<ContentLocale, Record<string, string>> = {
     noStops: 'This journey has no stops yet.',
     notFound: 'This annotation could not be found - it may have been deleted.',
     openMap: 'Open map',
+    closePanel: 'Close panel',
     discover: 'Discover the map',
     followJourney: 'Follow the journey',
     preview: 'Preview',
@@ -339,7 +343,12 @@ const getScrollContainer = (element: HTMLElement) =>
 const scrollCardToTop = (card: HTMLElement, spacer: HTMLElement | null, behavior: ScrollBehavior) => {
   const scroller = getScrollContainer(card);
   if (!scroller) return;
-  const top = scroller.scrollTop + card.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
+  // A host page can keep room above the card (for a close button, say) with `scroll-margin-top`.
+  const margin = parseFloat(getComputedStyle(card).scrollMarginTop) || 0;
+  const top = Math.max(
+    0,
+    scroller.scrollTop + card.getBoundingClientRect().top - scroller.getBoundingClientRect().top - margin
+  );
   if (spacer) {
     const spacerHeight = spacer.offsetHeight;
     const missing = top + scroller.clientHeight - (scroller.scrollHeight - spacerHeight);
@@ -351,12 +360,74 @@ const scrollCardToTop = (card: HTMLElement, spacer: HTMLElement | null, behavior
 
 const localeDir = (locale: ContentLocale) => (locale === 'ar' ? 'rtl' : 'ltr');
 
+type PanelPosition = 'right' | 'bottom';
+
+interface SitePanelProps {
+  children: ReactNode;
+  id: string;
+  label: string;
+  locale: ContentLocale;
+  position: PanelPosition;
+  removeCompanionWindow: typeof removeCompanionWindow;
+  // What the panel shows; a change (a pin clicked, a stop scrolled to) reopens a collapsed panel.
+  showing: string;
+  windowId: string;
+}
+
+// The site preset's panel (`.dbf-map-panel*` class contract): its own header - the sheet handle
+// and label on a phone, a round close button - in place of Mirador's title bar. The host page
+// styles it; the tools in siteMapToolsPlugin.tsx collapse it.
+const SitePanel = ({
+  children,
+  id,
+  label,
+  locale,
+  position,
+  removeCompanionWindow: dispatchRemoveCompanionWindow,
+  showing,
+  windowId,
+}: SitePanelProps) => {
+  const collapsed = usePanelCollapsed(windowId);
+  useEffect(() => {
+    setPanelCollapsed(windowId, false);
+  }, [showing, windowId]);
+
+  return (
+    <CompanionWindow header={false} id={id} title={label} windowId={windowId}>
+      <div
+        className="dbf-map-panel__body"
+        data-collapsed={collapsed ? 'true' : undefined}
+        data-position={position}
+        dir={localeDir(locale)}
+        lang={locale}
+      >
+        <div className="dbf-map-panel__header">
+          <span aria-hidden className="dbf-map-panel__handle" />
+          <h2 className="dbf-map-panel__label">{label}</h2>
+          <button
+            aria-label={LABELS[locale].closePanel}
+            className="dbf-map-panel__close"
+            onClick={() => {
+              setPanelCollapsed(windowId, false);
+              dispatchRemoveCompanionWindow(windowId, id);
+            }}
+            type="button"
+          />
+        </div>
+        {children}
+      </div>
+    </CompanionWindow>
+  );
+};
+
 interface JourneyPreviewContentProps {
   id: string;
   journey: RawAnnotation;
   site?: boolean;
   locale: ContentLocale;
   pois: RawAnnotation[];
+  position: PanelPosition;
+  removeCompanionWindow: typeof removeCompanionWindow;
   selectAnnotation: typeof selectAnnotation;
   selectedAnnotationId?: string;
   windowId: string;
@@ -367,6 +438,8 @@ const JourneyPreviewContent = ({
   journey,
   locale,
   pois,
+  position,
+  removeCompanionWindow: dispatchRemoveCompanionWindow,
   selectAnnotation: dispatchSelectAnnotation,
   selectedAnnotationId,
   site = false,
@@ -431,65 +504,74 @@ const JourneyPreviewContent = ({
   };
 
   if (site) {
-    // The site's markup (`.dbf-map-poi*` class contract): the host page styles it; nothing
-    // here is inline. Stops are cards separated by a divider; each card's title is the
-    // keyboard target, the card itself the pointer target.
+    // Stops are cards separated by a divider (`.dbf-map-poi*` class contract). Each card's
+    // title is its keyboard target, the card itself the pointer target; the marker carries
+    // the stop's number.
     return (
-      <CompanionWindow id={id} title={labels.followJourney} windowId={windowId}>
-        <div className="dbf-map-panel__body" dir={localeDir(locale)} lang={locale}>
-          <div className="dbf-map-panel__list" ref={stopsRef}>
-            {pois.length === 0 && <p>{labels.noStops}</p>}
-            {pois.flatMap((poi, index) => {
-              const poiTitle = textBody(poi, locale, 'identifying');
-              const description = sanitizeDescription(textBody(poi, locale, 'describing'));
-              const media = mediaForLocale(poi, locale);
-              const isSelected = poi.id === selectedAnnotationId;
-              const card = (
-                // eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-noninteractive-element-interactions -- the title button is the keyboard target
-                <article
-                  className="dbf-map-poi"
-                  data-poi-id={poi.id}
-                  data-selected={isSelected ? 'true' : undefined}
-                  key={poi.id}
-                  onClick={() => focusPoi(poi)}
-                >
-                  <p className="dbf-map-poi__eyebrow">
-                    <span className="dbf-map-poi__number">{index + 1}</span>
-                    {journeyTitle}
-                  </p>
-                  <h3 className="dbf-map-poi__title">
-                    <button
-                      aria-current={isSelected || undefined}
-                      className="dbf-map-poi__select"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        focusPoi(poi);
-                      }}
-                      type="button"
-                    >
-                      {poiTitle || '—'}
-                    </button>
-                  </h3>
-                  {media?.thumbnailUrl && (
-                    <div className="dbf-map-poi__media">
-                      <img alt={media.title ?? ''} src={media.thumbnailUrl} />
-                    </div>
-                  )}
-                  {description && (
-                    // eslint-disable-next-line react/no-danger -- sanitised above
-                    <div className="dbf-map-poi__text" dangerouslySetInnerHTML={{ __html: description }} />
-                  )}
-                </article>
-              );
-              return index === 0
-                ? [card]
-                : [<span aria-hidden className="dbf-map-poi__divider" key={`divider-${poi.id}`} />, card];
-            })}
-            {/* Room for the last stops to scroll to the top when selected - see scrollCardToTop. */}
-            <div aria-hidden ref={spacerRef} style={{ height: 0 }} />
-          </div>
+      <SitePanel
+        id={id}
+        label={labels.followJourney}
+        locale={locale}
+        position={position}
+        removeCompanionWindow={dispatchRemoveCompanionWindow}
+        showing={`${journey.id}:${selectedAnnotationId ?? ''}`}
+        windowId={windowId}
+      >
+        <div className="dbf-map-panel__list" ref={stopsRef}>
+          {pois.length === 0 && <p>{labels.noStops}</p>}
+          {pois.flatMap((poi, index) => {
+            const poiTitle = textBody(poi, locale, 'identifying');
+            const description = sanitizeDescription(textBody(poi, locale, 'describing'));
+            const media = mediaForLocale(poi, locale);
+            const isSelected = poi.id === selectedAnnotationId;
+            const card = (
+              // eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-noninteractive-element-interactions -- the title button is the keyboard target
+              <article
+                className="dbf-map-poi"
+                data-poi-id={poi.id}
+                data-selected={isSelected ? 'true' : undefined}
+                data-variant="stop"
+                key={poi.id}
+                onClick={() => focusPoi(poi)}
+              >
+                <div className="dbf-map-poi__header">
+                  <span className="dbf-map-poi__marker">{index + 1}</span>
+                  <div className="dbf-map-poi__heading">
+                    {journeyTitle && <p className="dbf-map-poi__eyebrow">{journeyTitle}</p>}
+                    <h3 className="dbf-map-poi__title">
+                      <button
+                        aria-current={isSelected || undefined}
+                        className="dbf-map-poi__select"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          focusPoi(poi);
+                        }}
+                        type="button"
+                      >
+                        {poiTitle || '—'}
+                      </button>
+                    </h3>
+                  </div>
+                </div>
+                {media?.thumbnailUrl && (
+                  <div className="dbf-map-poi__media">
+                    <img alt={media.title ?? ''} src={media.thumbnailUrl} />
+                  </div>
+                )}
+                {description && (
+                  // eslint-disable-next-line react/no-danger -- sanitised above
+                  <div className="dbf-map-poi__text" dangerouslySetInnerHTML={{ __html: description }} />
+                )}
+              </article>
+            );
+            return index === 0
+              ? [card]
+              : [<span aria-hidden className="dbf-map-poi__divider" key={`divider-${poi.id}`} />, card];
+          })}
+          {/* Room for the last stops to scroll to the top when selected - see scrollCardToTop. */}
+          <div aria-hidden ref={spacerRef} style={{ height: 0 }} />
         </div>
-      </CompanionWindow>
+      </SitePanel>
     );
   }
 
@@ -587,6 +669,8 @@ interface PoiPreviewContentProps {
   linkedMapManifestId: string | null;
   locale: ContentLocale;
   openNestedMap: (windowId: string, manifestId: string) => void;
+  position: PanelPosition;
+  removeCompanionWindow: typeof removeCompanionWindow;
   windowId: string;
 }
 
@@ -596,6 +680,8 @@ const PoiPreviewContent = ({
   linkedMapManifestId,
   locale,
   openNestedMap: dispatchOpenNestedMap,
+  position,
+  removeCompanionWindow: dispatchRemoveCompanionWindow,
   site = false,
   windowId,
 }: PoiPreviewContentProps) => {
@@ -614,34 +700,45 @@ const PoiPreviewContent = ({
 
   if (site) {
     return (
-      <CompanionWindow id={id} title={labels.discover} windowId={windowId}>
-        <div className="dbf-map-panel__body" dir={localeDir(locale)} lang={locale}>
-          {!annotation && <p className="dbf-map-error">{labels.notFound}</p>}
-          {annotation && (
-            <article className="dbf-map-poi" data-selected="true">
-              <h3 className="dbf-map-poi__title">{title || labels.POI}</h3>
-              {media?.thumbnailUrl && (
-                <div className="dbf-map-poi__media">
-                  <img alt={media.title ?? ''} src={media.thumbnailUrl} />
-                </div>
-              )}
-              {description && (
-                // eslint-disable-next-line react/no-danger -- sanitised above
-                <div className="dbf-map-poi__text" dangerouslySetInnerHTML={{ __html: description }} />
-              )}
-              {linkedMapManifestId && (
-                <button
-                  className="dbf-map-poi__nested"
-                  onClick={() => dispatchOpenNestedMap(windowId, linkedMapManifestId)}
-                  type="button"
-                >
-                  {labels.openMap}
-                </button>
-              )}
-            </article>
-          )}
-        </div>
-      </CompanionWindow>
+      <SitePanel
+        id={id}
+        label={labels.discover}
+        locale={locale}
+        position={position}
+        removeCompanionWindow={dispatchRemoveCompanionWindow}
+        showing={annotation?.id ?? ''}
+        windowId={windowId}
+      >
+        {!annotation && <p className="dbf-map-error">{labels.notFound}</p>}
+        {annotation && (
+          <article className="dbf-map-poi" data-selected="true" data-variant="single">
+            <div className="dbf-map-poi__header">
+              <span aria-hidden className="dbf-map-poi__marker" />
+              <div className="dbf-map-poi__heading">
+                <h3 className="dbf-map-poi__title">{title || labels.POI}</h3>
+              </div>
+            </div>
+            {media?.thumbnailUrl && (
+              <div className="dbf-map-poi__media">
+                <img alt={media.title ?? ''} src={media.thumbnailUrl} />
+              </div>
+            )}
+            {description && (
+              // eslint-disable-next-line react/no-danger -- sanitised above
+              <div className="dbf-map-poi__text" dangerouslySetInnerHTML={{ __html: description }} />
+            )}
+            {linkedMapManifestId && (
+              <button
+                className="dbf-map-poi__nested"
+                onClick={() => dispatchOpenNestedMap(windowId, linkedMapManifestId)}
+                type="button"
+              >
+                {labels.openMap}
+              </button>
+            )}
+          </article>
+        )}
+      </SitePanel>
     );
   }
 
@@ -684,6 +781,8 @@ interface PreviewContentProps {
   linkedMapManifestId: string | null;
   locale: ContentLocale;
   openNestedMap: (windowId: string, manifestId: string) => void;
+  position: PanelPosition;
+  removeCompanionWindow: typeof removeCompanionWindow;
   selectAnnotation: typeof selectAnnotation;
   selectedAnnotationId?: string;
   site?: boolean;
@@ -697,6 +796,8 @@ const PreviewContent = ({
   linkedMapManifestId,
   locale,
   openNestedMap: dispatchOpenNestedMap,
+  position,
+  removeCompanionWindow: dispatchRemoveCompanionWindow,
   selectAnnotation: dispatchSelectAnnotation,
   selectedAnnotationId,
   site,
@@ -709,6 +810,8 @@ const PreviewContent = ({
         journey={annotation}
         locale={locale}
         pois={journeyPois}
+        position={position}
+        removeCompanionWindow={dispatchRemoveCompanionWindow}
         selectAnnotation={dispatchSelectAnnotation}
         selectedAnnotationId={selectedAnnotationId}
         site={site}
@@ -723,6 +826,8 @@ const PreviewContent = ({
       linkedMapManifestId={linkedMapManifestId}
       locale={locale}
       openNestedMap={dispatchOpenNestedMap}
+      position={position}
+      removeCompanionWindow={dispatchRemoveCompanionWindow}
       site={site}
       windowId={windowId}
     />
@@ -733,9 +838,10 @@ const poiPreviewCompanionWindowPlugin = {
   component: PreviewContent,
   companionWindowKey: POI_PREVIEW_CONTENT_ID,
   mapStateToProps: (state: unknown, { id, windowId }: { id: string; windowId: string }) => {
-    const annotationId = getCompanionWindow(state, { companionWindowId: id })?.annotationid as
-      | string
+    const companionWindow = getCompanionWindow(state, { companionWindowId: id }) as
+      | { annotationid?: string; position?: string }
       | undefined;
+    const annotationId = companionWindow?.annotationid;
     const items = getCanvasAnnotationItems(state, windowId);
     const annotation = items.find((item) => item.id === annotationId) ?? null;
     return {
@@ -745,12 +851,13 @@ const poiPreviewCompanionWindowPlugin = {
       // Only a Nested Map point whose map the host can resolve gets an "Open map" button.
       linkedMapManifestId: getLinkedMapManifestId(state, annotation?.['dbf:linkedMap']),
       locale: getContentLocale((getConfig(state) as { language?: string }).language),
+      position: companionWindow?.position === 'bottom' ? 'bottom' : 'right',
       selectedAnnotationId: getSelectedAnnotationId(state, { windowId }) as string | undefined,
       // MapViewer's site preset renders the site's markup; the annotation editor never sets it.
       site: (getConfig(state) as { maps?: { site?: boolean } }).maps?.site === true,
     };
   },
-  mapDispatchToProps: { openNestedMap, selectAnnotation },
+  mapDispatchToProps: { openNestedMap, removeCompanionWindow, selectAnnotation },
 };
 
 type AnnotationPages = Record<string, { json?: { items?: unknown[] } }>;

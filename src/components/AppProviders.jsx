@@ -97,16 +97,35 @@ const cacheDefault = createCache({
 });
 
 /**
+ * The same caches, inserting their styles at the start of <head> rather than the end, so a
+ * host page's own stylesheets override Mirador's at equal specificity (`config.styles.prepend`).
+ */
+const cacheRtlPrepended = createCache({
+  key: 'muirtl',
+  prepend: true,
+  stylisPlugins: [prefixer, rtlPlugin],
+});
+const cacheDefaultPrepended = createCache({
+  key: 'mui',
+  prepend: true,
+});
+
+const emotionCache = (direction, prepend) => {
+  if (direction === 'rtl') return prepend ? cacheRtlPrepended : cacheRtl;
+  return prepend ? cacheDefaultPrepended : cacheDefault;
+};
+
+/**
  * This component adds viewer-specific providers.
  * @prop {Object} manifests
  */
-export function AppProviders({ children = null, language, theme, translations, dndManager = undefined }) {
+export function AppProviders({ children = null, language, theme, translations, dndManager = undefined, prependStyles = false }) {
   return (
     <FullScreenShim>
       <StoreAwareI18nextProvider language={language} translations={translations}>
         <LocaleContext.Provider value={language}>
           <StyledEngineProvider injectFirst>
-            <CacheProvider value={theme.direction === 'rtl' ? cacheRtl : cacheDefault}>
+            <CacheProvider value={emotionCache(theme.direction, prependStyles)}>
               <ThemeProvider theme={createTheme(theme)}>
                 <MaybeDndProvider dndManager={dndManager}>
                   <FailedImageProvider>{children}</FailedImageProvider>
@@ -124,6 +143,7 @@ AppProviders.propTypes = {
   children: PropTypes.node,
   dndManager: PropTypes.object,
   language: PropTypes.string.isRequired,
+  prependStyles: PropTypes.bool,
   theme: PropTypes.object.isRequired,
   translations: PropTypes.object.isRequired,
 };

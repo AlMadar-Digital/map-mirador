@@ -63,12 +63,19 @@ export const defaultMapViewerConfig = {
     // instead. `highlightAllAnnotations` still draws markers on the canvas regardless.
     sideBarOpenByDefault: false,
     highlightAllAnnotations: true,
+    // The site's preview panel is 480px wide (Figma 2843:43435).
+    defaultSidebarPanelWidth: 480,
     panels: {
       canvas: false,
     },
   },
   workspaceControlPanel: {
     enabled: false,
+  },
+  // MapViewer is the public site's viewer: its host page styles the map UI through the
+  // `.dbf-map*` class contract, so Mirador's own styles go first and lose ties to it.
+  styles: {
+    prepend: true,
   },
 };
 
@@ -122,6 +129,9 @@ export function MapViewer({ getLinkedMapManifestId = undefined, lang = 'en', man
         id: container.id,
         language: langRef.current,
         maps: {
+          // The preview renders the site's markup (`.dbf-map-poi*` class contract) rather
+          // than the annotation editor's own; the editor never sets this.
+          site: true,
           getLinkedMapManifestId: hasLinkedMapResolver
             ? (linkedMap) => getLinkedMapManifestIdRef.current?.(linkedMap)
             : undefined,

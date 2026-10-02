@@ -3,6 +3,7 @@
  * annotations.
  */
 import { buildPath2D } from '../lib/svgShapesToPath';
+import { smoothPath, straightSegmentPoints } from './smoothPath';
 
 /**
  * The POI marker icon's path data and viewBox, copied from src/assets/icons/poi-marker.svg -
@@ -55,8 +56,14 @@ export function poiHitTarget(x, y, zoomRatio) {
 
 export default class CanvasAnnotationDisplay {
   /** */
-  constructor({ resource, palette, zoomRatio, offset, selected, hovered, journeyStopNumber }) {
+  constructor({ resource, palette, zoomRatio, offset, selected, hovered, journeyStopNumber, lineStyle = null }) {
     this.resource = resource;
+    /**
+     * A host's own style for lines (a journey), in screen pixels, applied over the SVG's own
+     * stroke in every state: `{ strokeStyle, lineWidth, lineDash, curve }`. `curve` draws a
+     * straight-segment line as a smooth curve through its points.
+     */
+    this.lineStyle = lineStyle;
     this.journeyStopNumber = journeyStopNumber;
     this.palette = palette;
     this.zoomRatio = zoomRatio;
@@ -200,7 +207,8 @@ export default class CanvasAnnotationDisplay {
        */
       this.context.save();
       this.context.translate(this.offset.x, this.offset.y);
-      const p = buildPath2D(element);
+      const points = this.lineStyle?.curve ? straightSegmentPoints(element) : null;
+      const p = points ? smoothPath(points) : buildPath2D(element);
 
       // Setup styling from SVG -> Canvas
       this.context.strokeStyle = this.color;
@@ -228,6 +236,13 @@ export default class CanvasAnnotationDisplay {
       // Reset the color if it is selected or hovered on
       if (this.selected || this.hovered) {
         this.context.strokeStyle = currentPalette.strokeStyle || currentPalette.fillStyle;
+      }
+
+      if (this.lineStyle) {
+        const { lineDash, lineWidth, strokeStyle } = this.lineStyle;
+        if (strokeStyle) this.context.strokeStyle = strokeStyle;
+        if (lineWidth) this.context.lineWidth = lineWidth / this.zoomRatio;
+        if (lineDash) this.context.setLineDash(lineDash.map((length) => length / this.zoomRatio));
       }
 
       this.context.globalAlpha = currentPalette.globalAlpha;

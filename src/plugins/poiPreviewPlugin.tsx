@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ComponentType, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, type ComponentType, type ReactNode } from 'react';
 import DOMPurify from 'dompurify';
 import Button from '@mui/material/Button';
 import MapIcon from '@mui/icons-material/MapSharp';
@@ -26,6 +26,7 @@ import {
 } from '../index';
 import { getLinkedMapManifestId, openNestedMap, type LinkedMap } from './nestedMapPlugin';
 import { setPanelCollapsed, usePanelCollapsed } from './sitePanelState';
+import { readLineStyle, useSitePins, type PinResource } from './sitePins';
 
 // A "dumb" way to preview a POI/journey (issue #375): a Mirador companion window plugin,
 // registered alongside dbf-mirador-annotation-editor's own (see MiradorMaeViewer.tsx) via
@@ -924,12 +925,15 @@ export const usePreviewPosition = (): 'bottom' | 'right' => {
 // with a pointSelector (CanvasAnnotationDisplay#pointContext), a Journey's own canvas target is
 // one with an svgSelector (AnnotationsOverlay#isAnnotationAtPoint's own svgSelector branch).
 type AnnotationResourceLike = { id: string; pointSelector?: unknown; svgSelector?: unknown };
-type AnnotationListItem = { resources?: AnnotationResourceLike[] };
+type AnnotationListItem = { id?: string; resources?: AnnotationResourceLike[] };
 
 interface AnnotationsOverlayTargetProps {
   annotations?: AnnotationListItem[];
+  canvasWorld?: { offsetByCanvas?: (canvasId: string) => { x: number; y: number } };
   searchAnnotations?: AnnotationListItem[];
   selectAnnotation?: (windowId: string, annotationId: string) => void;
+  selectedAnnotationId?: string | null;
+  viewer?: (Parameters<typeof useSitePins>[0]['viewer'] & { element?: HTMLElement }) | null;
   windowId: string;
   [key: string]: unknown;
 }
@@ -941,6 +945,8 @@ interface AnnotationsOverlayPoiClickWrapperProps {
   updateCompanionWindow: typeof updateCompanionWindow;
   annotationPages?: AnnotationPages;
   existingPreviewCompanionWindowId?: string;
+  locale?: ContentLocale;
+  site?: boolean;
 }
 
 // Wraps AnnotationsOverlay (the component that owns the OSD canvas-click handler and the
@@ -957,6 +963,8 @@ const AnnotationsOverlayPoiClickWrapper = ({
   updateCompanionWindow: dispatchUpdateCompanionWindow,
   annotationPages,
   existingPreviewCompanionWindowId,
+  locale = 'en',
+  site = false,
 }: AnnotationsOverlayPoiClickWrapperProps) => {
   const { annotations = [], searchAnnotations = [], selectAnnotation } = targetProps;
   const previewPosition = usePreviewPosition();
@@ -986,6 +994,45 @@ const AnnotationsOverlayPoiClickWrapper = ({
     );
   };
 
+  // The site preset draws POIs as buttons over the map (sitePins.ts) rather than on the canvas,
+  // and the journey line in the host page's style.
+  const pinResources = site
+    ? (annotations.flatMap((annotation) => annotation.resources ?? []).filter(
+        (resource) => resource.pointSelector
+      ) as unknown as PinResource[])
+    : [];
+  const labels = new Map(
+    site
+      ? annotationPagesItems(annotationPages).map((item) => [item.id, textBody(item, locale, 'identifying')])
+      : []
+  );
+  useSitePins({
+    canvasWorld: targetProps.canvasWorld,
+    enabled: site,
+    labels,
+    onSelect: (annotationId) => selectAnnotationAndMaybePreview(targetProps.windowId, annotationId),
+    resources: pinResources,
+    selectedAnnotationId: targetProps.selectedAnnotationId,
+    viewer: targetProps.viewer,
+  });
+  const lineStyleKey = site ? JSON.stringify(readLineStyle(targetProps.viewer?.element)) : 'null';
+  const lineStyle = useMemo(() => JSON.parse(lineStyleKey), [lineStyleKey]);
+
+  if (site) {
+    const canvasAnnotations = annotations.map((annotation) => ({
+      id: annotation.id,
+      resources: (annotation.resources ?? []).filter((resource) => !resource.pointSelector),
+    }));
+    return (
+      <TargetComponent
+        {...targetProps}
+        annotations={canvasAnnotations}
+        lineStyle={lineStyle}
+        selectAnnotation={selectAnnotationAndMaybePreview}
+      />
+    );
+  }
+
   return <TargetComponent {...targetProps} selectAnnotation={selectAnnotationAndMaybePreview} />;
 };
 
@@ -998,6 +1045,8 @@ const poiPreviewClickPlugin = {
     // re-render of the whole overlay) on every store update.
     annotationPages: getCanvasAnnotationPages(state, windowId),
     existingPreviewCompanionWindowId: getPreviewCompanionWindowId(state, windowId),
+    locale: getContentLocale((getConfig(state) as { language?: string }).language),
+    site: (getConfig(state) as { maps?: { site?: boolean } }).maps?.site === true,
   }),
   mapDispatchToProps: { addCompanionWindow, updateCompanionWindow },
 };

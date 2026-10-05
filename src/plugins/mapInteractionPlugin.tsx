@@ -18,6 +18,7 @@ import {
   usePreviewPosition,
 } from './poiPreviewPlugin';
 import { registerTourStepper } from './sitePanelState';
+import { getTourPois, type OrderedAnnotation } from './tourOrder';
 
 // Map "tour" interactions for MapViewer's rendering mode (issue #434): the mouse wheel steps
 // through the map's POIs one at a time instead of zooming - each step selects the POI, opens
@@ -28,53 +29,13 @@ import { registerTourStepper } from './sitePanelState';
 // Only for the public viewer: in the Strapi editor the wheel has to keep zooming, so this
 // isn't part of poiPreviewPlugins, and MapViewer registers it on its own.
 
-type OrderedAnnotation = {
-  id: string;
-  'dbf:kind'?: 'POI' | 'Journey';
-  'dbf:journey'?: { id: string; order: number } | null;
-  'dbf:order'?: number | null;
-  target?: unknown;
-};
-
 export type TourStep = { poiId: string; previewId: string; point: { x: number; y: number } };
 
-// A missing order sorts after every explicit one; ties break on id for a stable order - the
-// same rule as mirador-annotation-editor's annotationListGrouping.js, so the tour follows the
-// editor's list.
-const compareByOrder = (
-  a: { id: string; order?: number | null },
-  b: { id: string; order?: number | null }
-) => {
-  if (a.order === b.order) return a.id.localeCompare(b.id);
-  if (a.order === null || a.order === undefined) return 1;
-  if (b.order === null || b.order === undefined) return -1;
-  return a.order - b.order;
-};
-
-// The map's POIs in tour order: journeys and standalone POIs by their `dbf:order`, a journey
-// unrolled into its stops (by `dbf:journey.order`) where it falls. A journey isn't a step of its
-// own - its first stop is. POIs without a pin to focus on are skipped.
+// The map's POIs in tour order (tourOrder.ts), as steps: POIs without a pin to focus on are
+// skipped.
 export const getTourSteps = (items: OrderedAnnotation[]): TourStep[] => {
   const ids = new Set(items.map((item) => item.id));
-  const pois = items.filter((item) => item['dbf:kind'] === 'POI');
-  const stopsOf = (journeyId: string) =>
-    pois
-      .filter((poi) => poi['dbf:journey']?.id === journeyId)
-      .sort((a, b) =>
-        compareByOrder({ id: a.id, order: a['dbf:journey']?.order }, { id: b.id, order: b['dbf:journey']?.order })
-      );
-
-  const topLevel = items
-    .filter(
-      (item) =>
-        item['dbf:kind'] === 'Journey' ||
-        // A stop whose journey isn't on this canvas stands on its own.
-        (item['dbf:kind'] === 'POI' && !(item['dbf:journey']?.id && ids.has(item['dbf:journey'].id)))
-    )
-    .sort((a, b) => compareByOrder({ id: a.id, order: a['dbf:order'] }, { id: b.id, order: b['dbf:order'] }));
-
-  return topLevel
-    .flatMap((item) => (item['dbf:kind'] === 'Journey' ? stopsOf(item.id) : [item]))
+  return getTourPois(items)
     .flatMap((poi) => {
       const point = getPoiPoint(poi);
       return point ? [{ point, poiId: poi.id, previewId: getPreviewAnnotationId(poi, (id) => ids.has(id)) }] : [];

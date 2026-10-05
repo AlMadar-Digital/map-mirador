@@ -107,3 +107,30 @@ export const useMinimiseOnFirstInteraction = (
     return () => INTERACTION_EVENTS.forEach((name) => viewer.removeHandler(name, minimise));
   }, [enabled, viewer, windowId]);
 };
+
+// A pin pressed from the keyboard moves focus into the panel it opens (T-37); a mouse click
+// leaves focus where it is.
+const panelFocusRequests = new Map<string, number>();
+
+export const requestPanelFocus = (windowId: string) => {
+  panelFocusRequests.set(windowId, (panelFocusRequests.get(windowId) ?? 0) + 1);
+  listeners.forEach((listener) => listener());
+};
+
+/** Changes on every request, so a panel already showing the POI takes focus too. */
+export const usePanelFocusRequest = (windowId: string): number =>
+  useSyncExternalStore(
+    subscribe,
+    () => panelFocusRequests.get(windowId) ?? 0,
+    () => 0
+  );
+
+const consumedRequests = new Map<string, number>();
+
+/** True, once per request, when the panel should take focus. */
+export const consumePanelFocus = (windowId: string): boolean => {
+  const request = panelFocusRequests.get(windowId) ?? 0;
+  if (request === 0 || consumedRequests.get(windowId) === request) return false;
+  consumedRequests.set(windowId, request);
+  return true;
+};

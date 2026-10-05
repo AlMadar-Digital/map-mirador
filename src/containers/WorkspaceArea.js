@@ -14,6 +14,8 @@ const mapStateToProps = (state) => ({
   isWorkspaceAddVisible: getWorkspace(state).isWorkspaceAddVisible,
   isWorkspaceControlPanelVisible: getConfig(state).workspaceControlPanel.enabled,
   lang: getConfig(state).language,
+  // MapViewer's site preset, embedded in a host page that has its own landmarks and headings.
+  site: getConfig(state).maps?.site === true,
 });
 
 const enhance = compose(connect(mapStateToProps), withPlugins('WorkspaceArea'));

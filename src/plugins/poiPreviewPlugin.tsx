@@ -1,4 +1,11 @@
-import { useEffect, useMemo, useRef, type ComponentType, type ReactNode } from 'react';
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  type ComponentType,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
+} from 'react';
 import DOMPurify from 'dompurify';
 import Button from '@mui/material/Button';
 import MapIcon from '@mui/icons-material/MapSharp';
@@ -39,15 +46,19 @@ import { MAP_INFO_ID, NESTED_ORIGIN_ID, POI_PREVIEW_CONTENT_ID } from './preview
 
 export { MAP_INFO_ID, NESTED_ORIGIN_ID, POI_PREVIEW_CONTENT_ID };
 import {
+  consumePanelFocus,
   resetSheet,
   setPanelCollapsed,
   setSheetSnap,
   useMinimiseOnFirstInteraction,
   usePanelCollapsed,
+  usePanelFocusRequest,
   useSheetSnap,
   type SheetSnap,
 } from './sitePanelState';
 import { useSheetGestures } from './sheetGestures';
+import { getTourPois } from './tourOrder';
+import { requestPinFocus } from './sitePins';
 import { readLineStyle, useSitePins, type PinResource } from './sitePins';
 
 // A "dumb" way to preview a POI/journey (issue #375): a Mirador companion window plugin,
@@ -164,7 +175,7 @@ export const sanitizeDescription = (html: string): string => {
   return String(purifier.sanitize(html, DESCRIPTION_HTML));
 };
 
-const textBody = (
+export const textBody = (
   annotation: RawAnnotation,
   language: string,
   purpose: 'identifying' | 'describing'
@@ -488,6 +499,8 @@ interface SitePanelProps {
   locale: ContentLocale;
   position: PanelPosition;
   removeCompanionWindow: typeof removeCompanionWindow;
+  // The POI whose pin takes focus back when the panel closes.
+  returnFocusTo?: string | null;
   // What the panel shows; a change (a pin clicked, a stop scrolled to) reopens a collapsed panel.
   showing: string;
   windowId: string;
@@ -503,6 +516,7 @@ const SitePanel = ({
   locale,
   position,
   removeCompanionWindow: dispatchRemoveCompanionWindow,
+  returnFocusTo = null,
   showing,
   windowId,
 }: SitePanelProps) => {
@@ -518,10 +532,59 @@ const SitePanel = ({
   const headerRef = useRef<HTMLDivElement>(null);
   useSheetGestures({ bodyRef, enabled: isSheet, headerRef, isRtl: locale === 'ar', windowId });
 
+  // Opened from the keyboard: focus moves to what the panel is about - the selected stop's
+  // title, else the card's title, else the panel's label (T-37).
+  const focusRequest = usePanelFocusRequest(windowId);
+  useEffect(() => {
+    if (!consumePanelFocus(windowId)) return undefined;
+    const frame = requestAnimationFrame(() => {
+      const body = bodyRef.current;
+      const target =
+        body?.querySelector<HTMLElement>('.dbf-map-poi[data-selected] .dbf-map-poi__select') ??
+        body?.querySelector<HTMLElement>('.dbf-map-poi__title') ??
+        body?.querySelector<HTMLElement>('.dbf-map-panel__label');
+      if (!target) return;
+      if (!target.matches('button')) target.tabIndex = -1;
+      target.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [focusRequest, showing, windowId]);
+
+  const close = () => {
+    resetSheet(windowId);
+    dispatchRemoveCompanionWindow(windowId, id);
+    // Focus goes back to the POI's pin, or to the tab that reopens the panel.
+    if (returnFocusTo) {
+      requestPinFocus(windowId, returnFocusTo);
+    } else {
+      const mapWindow = bodyRef.current?.closest('.mirador-window');
+      requestAnimationFrame(() => mapWindow?.querySelector<HTMLElement>('.dbf-map-panel__toggle')?.focus());
+    }
+  };
+  const closeRef = useRef(close);
+  useEffect(() => {
+    closeRef.current = close;
+  });
+
+  // Escape closes the open panel before it would close the whole view (the host listens in the
+  // bubble phase). Inside a nested map, Escape is Back's first.
+  useEffect(() => {
+    if (collapsed) return undefined;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return;
+      const mapWindow = bodyRef.current?.closest('.mirador-window');
+      if (!mapWindow || mapWindow.querySelector('.dbf-map__back')) return;
+      event.preventDefault();
+      closeRef.current();
+    };
+    document.addEventListener('keydown', onKeyDown, true);
+    return () => document.removeEventListener('keydown', onKeyDown, true);
+  }, [collapsed]);
+
   // The sheet's handle steps through its heights; arrow keys move up and down them.
   const nextSnap: Record<SheetSnap, SheetSnap> = { collapsed: 'half', full: 'half', half: 'full' };
   const handleLabel = { collapsed: labels.expand, full: labels.shrinkSheet, half: labels.expandSheet }[snap];
-  const onHandleKeyDown = (event: React.KeyboardEvent) => {
+  const onHandleKeyDown = (event: ReactKeyboardEvent) => {
     const order: SheetSnap[] = ['collapsed', 'half', 'full'];
     const step = { ArrowDown: -1, ArrowUp: 1 }[event.key as 'ArrowDown' | 'ArrowUp'];
     if (!step) return;
@@ -552,15 +615,7 @@ const SitePanel = ({
             />
           )}
           <h2 className="dbf-map-panel__label">{label}</h2>
-          <button
-            aria-label={labels.closePanel}
-            className="dbf-map-panel__close"
-            onClick={() => {
-              resetSheet(windowId);
-              dispatchRemoveCompanionWindow(windowId, id);
-            }}
-            type="button"
-          />
+          <button aria-label={labels.closePanel} className="dbf-map-panel__close" onClick={close} type="button" />
         </div>
         {children}
       </div>
@@ -679,6 +734,7 @@ const JourneyPreviewContent = ({
         locale={locale}
         position={position}
         removeCompanionWindow={dispatchRemoveCompanionWindow}
+        returnFocusTo={selectedAnnotationId}
         showing={`${journey.id}:${selectedAnnotationId ?? ''}`}
         windowId={windowId}
       >
@@ -894,6 +950,7 @@ const PoiPreviewContent = ({
         locale={locale}
         position={position}
         removeCompanionWindow={dispatchRemoveCompanionWindow}
+        returnFocusTo={carried ? null : annotation?.id}
         showing={annotation?.id ?? ''}
         windowId={windowId}
       >
@@ -1272,10 +1329,13 @@ const AnnotationsOverlayPoiClickWrapper = ({
       ? annotationPagesItems(annotationPages).map((item) => [item.id, textBody(item, locale, 'identifying')])
       : []
   );
+  const tourOrder = site ? getTourPois(annotationPagesItems(annotationPages)).map((poi) => poi.id) : [];
   useSitePins({
     canvasWorld: targetProps.canvasWorld,
     enabled: site,
     labels,
+    locale,
+    order: tourOrder,
     onSelect: (annotationId) => {
       // Pressing the selected pin of a POI with a nested map opens it again (after Back).
       const item = annotationId === targetProps.selectedAnnotationId

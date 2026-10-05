@@ -21,6 +21,14 @@ describe('WorkspaceArea', () => {
     expect(screen.getByRole('main')).toHaveAttribute('lang', 'en');
   });
 
+  it('is not a second main landmark inside a host page (MapViewer site preset)', () => {
+    const { container } = createWrapper({ site: true });
+
+    expect(screen.queryByRole('main')).not.toBeInTheDocument();
+    // eslint-disable-next-line testing-library/no-node-access, testing-library/no-container
+    expect(container.querySelector('.mirador-viewer')).toHaveAttribute('lang', 'en');
+  });
+
   it('should render all needed elements', () => {
     const { container } = createWrapper();
 

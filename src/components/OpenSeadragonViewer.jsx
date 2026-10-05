@@ -33,6 +33,7 @@ export function OpenSeadragonViewer({
   infoResponses = [],
   canvasWorld,
   nonTiledImages = [],
+  site = false,
   updateViewport,
   ...rest
 }) {
@@ -104,7 +105,7 @@ export function OpenSeadragonViewer({
       onUpdateViewport={onViewportChange}
       setViewer={setViewer}
       aria-label={t('item', { label })}
-      aria-live="polite"
+      aria-live={site ? undefined : 'polite'}
     >
       {infoResponses.map((infoResponse) => {
         const contentResource = canvasWorld.contentResource(infoResponse.id);
@@ -148,6 +149,7 @@ export function OpenSeadragonViewer({
 }
 
 OpenSeadragonViewer.propTypes = {
+  site: PropTypes.bool,
   canvasWorld: PropTypes.instanceOf(CanvasWorld).isRequired,
   children: PropTypes.node,
   drawAnnotations: PropTypes.bool,

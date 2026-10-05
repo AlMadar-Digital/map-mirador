@@ -127,6 +127,34 @@ describe('poiPreviewPlugin site preset', () => {
     });
   });
 
+  describe('keyboard', () => {
+    it('Escape closes the open panel before the view', () => {
+      const removeCompanionWindow = vi.fn();
+      const { container } = render(
+        <section className="mirador-window">
+          <PreviewContent
+            annotation={journey}
+            id="cw"
+            journeyPois={[stop('a', 'The Start', 1)]}
+            locale="en"
+            position="right"
+            removeCompanionWindow={removeCompanionWindow}
+            selectAnnotation={vi.fn()}
+            selectedAnnotationId="a"
+            site
+            windowId="window"
+          />
+        </section>,
+      );
+      const escape = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Escape' });
+      document.body.dispatchEvent(escape);
+
+      expect(removeCompanionWindow).toHaveBeenCalledWith('window', 'cw');
+      expect(escape.defaultPrevented).toBe(true);
+      expect(container).toBeTruthy();
+    });
+  });
+
   describe('mobile sheet', () => {
     afterEach(() => resetSheet('window'));
 

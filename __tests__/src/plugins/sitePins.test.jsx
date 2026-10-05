@@ -1,6 +1,7 @@
 /* eslint-disable testing-library/no-node-access -- the pins live in OpenSeadragon overlays, outside any rendered React tree */
 import { renderHook } from '@testing-library/react';
-import { useSitePins } from '../../../src/plugins/sitePins.ts';
+import { pinLabel, requestPinFocus, useSitePins } from '../../../src/plugins/sitePins.ts';
+import { consumePanelFocus } from '../../../src/plugins/sitePanelState.ts';
 
 /** A stand-in OpenSeadragon viewer that keeps its overlays in a list */
 const fakeViewer = () => {
@@ -30,7 +31,11 @@ describe('useSitePins', () => {
     renderHook(() => useSitePins({ enabled: true, labels, onSelect: vi.fn(), resources, selectedAnnotationId: 'b', viewer }));
 
     const buttons = viewer.overlays.map((anchor) => anchor.querySelector('button.dbf-map-pin'));
-    expect(buttons.map((button) => button.getAttribute('aria-label'))).toEqual(['1. The table', '2. The crown', 'Mount']);
+    expect(buttons.map((button) => button.getAttribute('aria-label'))).toEqual([
+      'The table, stop 1 of 2',
+      'The crown, stop 2 of 2',
+      'Mount',
+    ]);
     expect(buttons.map((button) => button.dataset.number ?? null)).toEqual(['1', '2', null]);
     expect(buttons[1]).toHaveAttribute('data-selected', 'true');
     expect(buttons[1]).toHaveAttribute('aria-pressed', 'true');
@@ -48,6 +53,60 @@ describe('useSitePins', () => {
 
     expect(onSelect).toHaveBeenCalledWith('c');
     expect(mapClick).not.toHaveBeenCalled();
+  });
+
+  it('names a stop "<title>, stop n of m", in English and Arabic', () => {
+    expect(pinLabel('The crown', { count: 4, number: 2 }, 'en')).toBe('The crown, stop 2 of 4');
+    expect(pinLabel('التاج', { count: 4, number: 2 }, 'ar')).toBe('التاج، المحطة 2 من 4');
+    expect(pinLabel('', { count: 4, number: 2 }, 'en')).toBe('stop 2 of 4');
+    expect(pinLabel('Mount', null, 'en')).toBe('Mount');
+  });
+
+  it('puts the pins in tour order, one tab stop, with the arrow keys moving along them', () => {
+    const viewer = fakeViewer();
+    const container = document.createElement('div');
+    document.body.append(container);
+    viewer.addOverlay.mockImplementation(({ element }) => {
+      viewer.overlays.push(element);
+      container.append(element);
+    });
+    const onSelect = vi.fn();
+    renderHook(() =>
+      useSitePins({ enabled: true, labels, onSelect, order: ['c', 'a', 'b'], resources, viewer, windowId: 'keys' }),
+    );
+
+    const buttons = [...container.querySelectorAll('button.dbf-map-pin')];
+    expect(buttons.map((button) => button.getAttribute('aria-label'))).toEqual([
+      'Mount',
+      'The table, stop 1 of 2',
+      'The crown, stop 2 of 2',
+    ]);
+    expect(buttons.map((button) => button.tabIndex)).toEqual([0, -1, -1]);
+
+    buttons[0].focus();
+    buttons[0].dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'ArrowRight' }));
+    expect(onSelect).toHaveBeenCalledWith('a');
+    expect(buttons[1]).toHaveFocus();
+
+    buttons[1].dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'End' }));
+    expect(onSelect).toHaveBeenLastCalledWith('b');
+
+    requestPinFocus('keys', 'c');
+    expect(buttons[0]).toHaveFocus();
+    container.remove();
+  });
+
+  it('asks the panel to take focus when a pin is pressed from the keyboard, not by mouse', () => {
+    const viewer = fakeViewer();
+    renderHook(() => useSitePins({ enabled: true, labels, onSelect: vi.fn(), resources, viewer, windowId: 'press' }));
+    const button = viewer.overlays[0].querySelector('button');
+
+    button.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }));
+    expect(consumePanelFocus('press')).toBe(false);
+
+    button.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 0 }));
+    expect(consumePanelFocus('press')).toBe(true);
+    expect(consumePanelFocus('press')).toBe(false);
   });
 
   it('removes its pins when it unmounts, and adds none outside the site preset', () => {

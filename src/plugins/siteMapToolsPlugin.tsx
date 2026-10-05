@@ -6,20 +6,38 @@ import {
   getConfig,
   getRequiredStatement,
   getRights,
+  getSelectedAnnotationId,
   updateCompanionWindow,
   // Relative, as in poiPreviewPlugin.tsx: this file lives inside the dbf-mirador package.
 } from '../index';
 import {
   MAP_INFO_ID,
+  getCanvasAnnotationItems,
   getContentLocale,
   getMapInfo,
+  getOrderedJourneyPois,
   getPreviewCompanionWindowId,
   openPreview,
   sanitizeDescription,
+  textBody,
   usePreviewPosition,
   type ContentLocale,
 } from './poiPreviewPlugin';
 import { setPanelCollapsed, usePanelCollapsed } from './sitePanelState';
+import { pinLabel } from './sitePins';
+
+// Read by screen readers only (the usual visually-hidden recipe).
+const VISUALLY_HIDDEN = {
+  border: 0,
+  clip: 'rect(0 0 0 0)',
+  height: 1,
+  margin: -1,
+  overflow: 'hidden',
+  padding: 0,
+  position: 'absolute',
+  whiteSpace: 'nowrap',
+  width: 1,
+} as const;
 
 // The site preset's map tools (Figma "map sidepanel" toolbars): the tab that hides and shows the
 // preview panel, and the zoom in / zoom out / image rights column. They replace Mirador's own
@@ -52,6 +70,8 @@ interface SiteMapToolsProps {
   TargetComponent: ComponentType<Record<string, unknown>>;
   targetProps: { windowId: string; [key: string]: unknown };
   addCompanionWindow: typeof addCompanionWindow;
+  // What a screen reader hears when a POI is selected: "<title>, stop n of m" (T-37).
+  announcement: string;
   hasMapInfo: boolean;
   locale: ContentLocale;
   panelPosition: 'right' | 'bottom' | null;
@@ -67,6 +87,7 @@ const SiteMapTools = ({
   TargetComponent,
   targetProps,
   addCompanionWindow: dispatchAddCompanionWindow,
+  announcement,
   hasMapInfo,
   locale,
   panelPosition,
@@ -120,6 +141,9 @@ const SiteMapTools = ({
 
   return (
     <div className="dbf-map-tools" data-panel={panel} data-panel-position={panelPosition ?? undefined}>
+      <div aria-atomic="true" className="dbf-map-live" role="status" style={VISUALLY_HIDDEN}>
+        {announcement}
+      </div>
       {panelPosition === 'right' && (
         <button
           aria-expanded={!collapsed}
@@ -197,7 +221,20 @@ export const siteMapToolsPlugin = {
       : undefined;
     const position = preview?.position;
     const locale = getContentLocale(config.language);
+    const items = getCanvasAnnotationItems(state, windowId);
+    const selectedId = getSelectedAnnotationId(state, { windowId }) as string | undefined;
+    const selected = items.find((item) => item.id === selectedId);
+    const journeyId = selected?.['dbf:journey']?.id;
+    const stops = journeyId ? getOrderedJourneyPois(items, journeyId) : [];
+    const stopIndex = selected ? stops.findIndex((stop) => stop.id === selected.id) : -1;
     return {
+      announcement: selected
+        ? pinLabel(
+            textBody(selected, locale, 'identifying'),
+            stopIndex >= 0 ? { count: stops.length, number: stopIndex + 1 } : null,
+            locale
+          )
+        : '',
       hasMapInfo: getMapInfo(state, windowId, locale) !== null,
       locale,
       panelPosition: position === 'right' || position === 'bottom' ? position : null,

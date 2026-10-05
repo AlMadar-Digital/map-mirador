@@ -252,6 +252,43 @@ type PixelRect = { x: number; y: number; width: number; height: number };
 const getOsdViewer = (windowId: string): OsdViewer | null =>
   OSDReferences.get(windowId)?.current ?? null;
 
+type RunningAnimation = { animationName?: string; finished: Promise<unknown>; playState: string; transitionProperty?: string };
+
+const runningAnimations = (element: Element): RunningAnimation[] =>
+  ((element as Element & { getAnimations?: () => RunningAnimation[] }).getAnimations?.() ?? []).filter(
+    (animation) => animation.playState === 'running'
+  );
+
+const overlaysOf = (viewer: OsdViewer): HTMLElement[] =>
+  Array.from(viewer.element?.closest('.mirador-window')?.querySelectorAll<HTMLElement>(OVERLAY_COMPANION_WINDOW_SELECTOR) ?? []);
+
+// Where an overlay will sit once it has slid in (T-07): mid-slide its on-screen rect is still
+// partly off the map, so a panel that is opening would count as not covering anything. The
+// slide-in (a CSS animation ending at no transform) is left out by taking the layout box, which
+// transforms don't move. A static transform (a host's collapsed panel) still counts.
+const settledRect = (overlay: HTMLElement): { bottom: number; left: number; right: number; top: number } => {
+  const sliding = runningAnimations(overlay).some((animation) => 'animationName' in animation);
+  const parent = overlay.offsetParent as HTMLElement | null;
+  if (!sliding || !parent) return overlay.getBoundingClientRect();
+  const origin = parent.getBoundingClientRect();
+  const left = origin.left + parent.clientLeft + overlay.offsetLeft;
+  const top = origin.top + parent.clientTop + overlay.offsetTop;
+  return { bottom: top + overlay.offsetHeight, left, right: left + overlay.offsetWidth, top };
+};
+
+// Runs `move` once overlays moving by a CSS transition (a host collapsing or reopening its
+// panel) have settled, so the visible area is measured where they end up (T-07).
+const afterOverlayTransitions = (viewer: OsdViewer, move: () => void) => {
+  const transitions = overlaysOf(viewer)
+    .flatMap(runningAnimations)
+    .filter((animation) => 'transitionProperty' in animation);
+  if (transitions.length === 0) {
+    move();
+    return;
+  }
+  Promise.all(transitions.map((transition) => transition.finished.catch(() => undefined))).then(move);
+};
+
 // The part of the map that isn't hidden behind a companion window floating over it (in
 // MapViewer, the POI/journey preview slides in over the canvas rather than next to it). An
 // overlay that spans the map's full height hides a strip on its side, one spanning its full
@@ -270,8 +307,8 @@ export const getVisibleMapArea = (viewer: OsdViewer): PixelRect | null => {
   let top = 0;
   let right = size.x;
   let bottom = size.y;
-  windowElement.querySelectorAll(OVERLAY_COMPANION_WINDOW_SELECTOR).forEach((overlay) => {
-    const rect = overlay.getBoundingClientRect();
+  windowElement.querySelectorAll<HTMLElement>(OVERLAY_COMPANION_WINDOW_SELECTOR).forEach((overlay) => {
+    const rect = settledRect(overlay);
     const x1 = Math.max(rect.left, container.left) - container.left;
     const x2 = Math.min(rect.right, container.right) - container.left;
     const y1 = Math.max(rect.top, container.top) - container.top;
@@ -319,7 +356,7 @@ const unitsPerPixelAtZoom = (viewport: OsdViewport, zoom: number) =>
 
 // Pans the main map onto a point, zooming in if the map is further out than the focus zoom
 // (but never zooming out a user who is already closer in).
-export const focusMapOnPoint = (windowId: string, point: Point) => {
+const focusMapOnPointNow = (windowId: string, point: Point) => {
   const viewer = getOsdViewer(windowId);
   const viewport = viewer?.viewport;
   if (!viewer || !viewport) return;
@@ -334,7 +371,7 @@ export const focusMapOnPoint = (windowId: string, point: Point) => {
 // Pans the map just enough to bring a point out from under a companion window (or back from
 // off-screen), keeping the current zoom - a no-op when the point is already in view, so
 // clicking a pin the user can see doesn't move the map under them.
-export const ensurePointVisible = (windowId: string, point: Point) => {
+const ensurePointVisibleNow = (windowId: string, point: Point) => {
   const viewer = getOsdViewer(windowId);
   const viewport = viewer?.viewport;
   const area = viewer ? getVisibleMapArea(viewer) : null;
@@ -355,10 +392,10 @@ export const ensurePointVisible = (windowId: string, point: Point) => {
 };
 
 // Fits every stop of a journey in view at once.
-export const fitMapToPoints = (windowId: string, points: Point[]) => {
+const fitMapToPointsNow = (windowId: string, points: Point[]) => {
   if (points.length === 0) return;
   if (points.length === 1) {
-    focusMapOnPoint(windowId, points[0]);
+    focusMapOnPointNow(windowId, points[0]);
     return;
   }
 
@@ -384,6 +421,19 @@ export const fitMapToPoints = (windowId: string, points: Point[]) => {
   );
   showCenteredInVisibleArea(viewer, { x: minX + width / 2, y: minY + height / 2 }, unitsPerPixel);
 };
+
+// The three run once a panel moving by a CSS transition has settled (T-07).
+const whenOverlaysSettle =
+  <Args extends unknown[]>(move: (windowId: string, ...args: Args) => void) =>
+  (windowId: string, ...args: Args) => {
+    const viewer = getOsdViewer(windowId);
+    if (!viewer) return;
+    afterOverlayTransitions(viewer, () => move(windowId, ...args));
+  };
+
+export const focusMapOnPoint = whenOverlaysSettle(focusMapOnPointNow);
+export const ensurePointVisible = whenOverlaysSettle(ensurePointVisibleNow);
+export const fitMapToPoints = whenOverlaysSettle(fitMapToPointsNow);
 
 // The scrolling content area of the companion window an element is in.
 const getScrollContainer = (element: HTMLElement) =>

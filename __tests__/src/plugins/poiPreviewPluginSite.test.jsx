@@ -186,6 +186,46 @@ describe('poiPreviewPlugin site preset', () => {
     });
   });
 
+  describe('eyebrow', () => {
+    it("shows a lone POI's eyebrow, and a stop's own eyebrow over its journey's title", () => {
+      const lone = { ...stop('l', 'Manzil Qastal', 1), 'dbf:journey': null, 'dbf:eyebrowEn': 'A journey to the coast' };
+      const { container, unmount } = render(
+        <PreviewContent
+          annotation={lone}
+          id="cw"
+          journeyPois={[]}
+          locale="en"
+          position="right"
+          removeCompanionWindow={vi.fn()}
+          selectAnnotation={vi.fn()}
+          site
+          windowId="window"
+        />,
+      );
+      // eslint-disable-next-line testing-library/no-container, testing-library/no-node-access -- the class name is the contract
+      expect(container.querySelector('.dbf-map-poi__eyebrow')).toHaveTextContent('A journey to the coast');
+      unmount();
+
+      const stops = [{ ...stop('a', 'Muwailih Fort', 1), 'dbf:eyebrowEn': 'The Start' }, stop('b', 'Manzil Qastal', 2)];
+      const journeyView = render(
+        <PreviewContent
+          annotation={journey}
+          id="cw"
+          journeyPois={stops}
+          locale="en"
+          position="right"
+          removeCompanionWindow={vi.fn()}
+          selectAnnotation={vi.fn()}
+          site
+          windowId="window"
+        />,
+      );
+      // eslint-disable-next-line testing-library/no-container, testing-library/no-node-access -- the class name is the contract
+      const eyebrows = [...journeyView.container.querySelectorAll('.dbf-map-poi__eyebrow')].map((el) => el.textContent);
+      expect(eyebrows).toEqual(['The Start', 'A journey to the coast']);
+    });
+  });
+
   describe('Discover the map', () => {
     it('shows the map title and description', () => {
       const { container } = render(

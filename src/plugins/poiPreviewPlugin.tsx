@@ -108,6 +108,9 @@ type RawAnnotation = {
   'dbf:journey'?: { id: string; order: number } | null;
   // Set on a "Nested Map" point only: the map it opens (see nestedMapPlugin.tsx).
   'dbf:linkedMap'?: LinkedMap | null;
+  // The short line the site shows above a POI's title ("The Start"), per language.
+  'dbf:eyebrowEn'?: string | null;
+  'dbf:eyebrowAr'?: string | null;
   body?: TextualAnnotationBody[];
   target?: unknown;
 };
@@ -188,6 +191,10 @@ export const textBody = (
 
 const mediaForLocale = (annotation: RawAnnotation, locale: ContentLocale): DbfMedia | null | undefined =>
   locale === 'en' ? annotation['dbf:mediaEn'] : annotation['dbf:mediaAr'];
+
+// A POI's eyebrow in the content locale, as plain text ('' when it has none).
+export const eyebrowFor = (annotation: RawAnnotation, locale: ContentLocale): string =>
+  ((locale === 'en' ? annotation['dbf:eyebrowEn'] : annotation['dbf:eyebrowAr']) ?? '').trim();
 
 const IMAGE_FILE = /\.(avif|gif|jpe?g|png|svg|webp)$/i;
 
@@ -759,7 +766,9 @@ const JourneyPreviewContent = ({
                 <div className="dbf-map-poi__header">
                   <span className="dbf-map-poi__marker">{index + 1}</span>
                   <div className="dbf-map-poi__heading">
-                    {journeyTitle && <p className="dbf-map-poi__eyebrow">{journeyTitle}</p>}
+                    {(eyebrowFor(poi, locale) || journeyTitle) && (
+                      <p className="dbf-map-poi__eyebrow">{eyebrowFor(poi, locale) || journeyTitle}</p>
+                    )}
                     <h3 className="dbf-map-poi__title">
                       <button
                         aria-current={isSelected || undefined}
@@ -961,6 +970,9 @@ const PoiPreviewContent = ({
             <div className="dbf-map-poi__header">
               <span aria-hidden className="dbf-map-poi__marker" />
               <div className="dbf-map-poi__heading">
+                {eyebrowFor(annotation, locale) && (
+                  <p className="dbf-map-poi__eyebrow">{eyebrowFor(annotation, locale)}</p>
+                )}
                 <h3 className="dbf-map-poi__title">{title || labels.POI}</h3>
               </div>
             </div>

@@ -80,8 +80,14 @@ const getMapHistory = (state: unknown, windowId: string): MapHistoryEntry[] =>
 export const getNestedOrigin = (state: unknown, windowId: string): NestedOrigin | null =>
   getMapHistory(state, windowId).at(-1)?.origin ?? null;
 
-// The POI whose selection Back restores must not open its nested map again straight away.
+// The POI whose selection Back restores must not open its nested map again straight away; nor
+// does a journey stop scrolled to in the panel (scrollSelect.ts) - clicking it then does.
 const skipNestedOpen = new Map<string, string>();
+
+/** Keeps the next selection of `annotationId` from opening its nested map. */
+export const skipNextNestedOpen = (windowId: string, annotationId: string) => {
+  skipNestedOpen.set(windowId, annotationId);
+};
 
 /** True, once, for the POI whose selection Back has just restored. */
 export const consumeSkipNestedOpen = (windowId: string, annotationId: string): boolean => {

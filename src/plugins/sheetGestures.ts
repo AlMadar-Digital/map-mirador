@@ -1,9 +1,11 @@
 import { useEffect, type RefObject } from 'react';
 import { SHEET_SNAPS, setSheetSnap, stepTour, type SheetSnap } from './sitePanelState';
+import { rowEdges } from './scrollSelect';
 
 // The site preset's bottom sheet gestures (TL-09, D6): dragging its header resizes it and lets
 // go onto the nearest height (or the next one in a flick's direction); a sideways swipe across
-// it turns the tour to the next or previous POI. The host styles the heights; while dragging,
+// it turns the tour to the next or previous POI. Over a journey's carousel the carousel scrolls
+// itself (scrollSelect.ts picks the stop), and the swipe only turns the tour past either end. The host styles the heights; while dragging,
 // the live height is the `--dbf-map-sheet-height` custom property on the Mirador window, which
 // the host's sheet and map tools both read.
 
@@ -51,6 +53,8 @@ export const swipeDirection = (dx: number, dy: number, duration: number, isRtl: 
 
 type Press = {
   axis: 'x' | 'y' | null;
+  // Over a sideways-scrolling list: whether it could scroll no further either way.
+  row: { atEnd: boolean; atStart: boolean } | null;
   fromHeader: boolean;
   height: number;
   lastTime: number;
@@ -80,6 +84,9 @@ export const useSheetGestures = ({ bodyRef, enabled, headerRef, isRtl, windowId 
     const heights = () => snapHeights(mapWindow()?.clientHeight ?? window.innerHeight);
 
     let press: Press | null = null;
+    // A press over the carousel that the browser took over to scroll it natively: its pointer
+    // events stop there (pointercancel), so it ends with its touch instead.
+    let rowSwipe: Press | null = null;
     let swallowClick = false;
 
     const endDrag = () => {
@@ -95,8 +102,10 @@ export const useSheetGestures = ({ bodyRef, enabled, headerRef, isRtl, windowId 
       if (target.closest('.dbf-map-panel__close') || (!fromHeader && event.pointerType === 'mouse')) return;
       const height = sheet()?.getBoundingClientRect().height;
       if (!height) return;
+      const row = target.closest<HTMLElement>('.dbf-map-panel__list');
       press = {
         axis: null,
+        row: row && row.scrollWidth > row.clientWidth + 1 ? rowEdges(row) : null,
         fromHeader,
         height,
         lastTime: event.timeStamp,
@@ -137,6 +146,14 @@ export const useSheetGestures = ({ bodyRef, enabled, headerRef, isRtl, windowId 
       mapWindow()?.style.setProperty('--dbf-map-sheet-height', `${height}px`);
     };
 
+    // A sideways swipe turns the tour - over the carousel, only past its first or last card.
+    const endSwipe = (ended: Press, x: number, y: number, time: number) => {
+      const direction = swipeDirection(x - ended.x, y - ended.y, time - ended.time, isRtl);
+      if (!direction) return;
+      if (ended.row && !(direction === 1 ? ended.row.atEnd : ended.row.atStart)) return;
+      stepTour(windowId, direction);
+    };
+
     const onPointerUp = (event: PointerEvent) => {
       if (!press || event.pointerId !== press.pointerId) return;
       const ended = press;
@@ -152,16 +169,21 @@ export const useSheetGestures = ({ bodyRef, enabled, headerRef, isRtl, windowId 
         }, 0);
         return;
       }
-      if (ended.axis === 'x') {
-        const direction = swipeDirection(event.clientX - ended.x, event.clientY - ended.y, event.timeStamp - ended.time, isRtl);
-        if (direction) stepTour(windowId, direction);
-      }
+      if (ended.axis === 'x') endSwipe(ended, event.clientX, event.clientY, event.timeStamp);
     };
 
     const onPointerCancel = (event: PointerEvent) => {
       if (!press || event.pointerId !== press.pointerId) return;
       if (press.axis === 'y') endDrag();
+      if (press.row && press.axis !== 'y') rowSwipe = press;
       press = null;
+    };
+
+    const onTouchEnd = (event: TouchEvent) => {
+      const ended = rowSwipe;
+      rowSwipe = null;
+      const touch = event.changedTouches[0];
+      if (ended && touch) endSwipe(ended, touch.clientX, touch.clientY, event.timeStamp);
     };
 
     const onClickCapture = (event: MouseEvent) => {
@@ -176,6 +198,8 @@ export const useSheetGestures = ({ bodyRef, enabled, headerRef, isRtl, windowId 
     window.addEventListener('pointermove', onPointerMove, { passive: false });
     window.addEventListener('pointerup', onPointerUp);
     window.addEventListener('pointercancel', onPointerCancel);
+    window.addEventListener('touchend', onTouchEnd);
+    window.addEventListener('touchcancel', onTouchEnd);
     return () => {
       endDrag();
       body.removeEventListener('pointerdown', onPointerDown);
@@ -183,6 +207,8 @@ export const useSheetGestures = ({ bodyRef, enabled, headerRef, isRtl, windowId 
       window.removeEventListener('pointermove', onPointerMove);
       window.removeEventListener('pointerup', onPointerUp);
       window.removeEventListener('pointercancel', onPointerCancel);
+      window.removeEventListener('touchend', onTouchEnd);
+      window.removeEventListener('touchcancel', onTouchEnd);
     };
   }, [bodyRef, enabled, headerRef, isRtl, windowId]);
 };

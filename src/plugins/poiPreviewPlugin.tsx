@@ -38,6 +38,7 @@ import {
   getLinkedMapManifestId,
   getNestedOrigin,
   openNestedMap,
+  skipNextNestedOpen,
   useRestoreParentViewport,
   type LinkedMap,
   type NestedOrigin,
@@ -57,6 +58,7 @@ import {
   type SheetSnap,
 } from './sitePanelState';
 import { useSheetGestures } from './sheetGestures';
+import { isRowLayout, useScrollSelect } from './scrollSelect';
 import { getTourPois } from './tourOrder';
 import { useFillView } from './fillView';
 import { requestPinFocus } from './sitePins';
@@ -496,6 +498,20 @@ const scrollCardToTop = (card: HTMLElement, spacer: HTMLElement | null, behavior
   scroller.scrollTo?.({ behavior, top });
 };
 
+// Scrolls a side-by-side list (the phone carousel) so a card starts where the cards snap, and
+// the panel back to its top so the card's heading shows.
+const scrollCardIntoRow = (list: HTMLElement, card: HTMLElement, behavior: ScrollBehavior) => {
+  const listRect = list.getBoundingClientRect();
+  const cardRect = card.getBoundingClientRect();
+  const style = getComputedStyle(list);
+  const delta =
+    style.direction === 'rtl'
+      ? cardRect.right - (listRect.right - (parseFloat(style.paddingRight) || 0))
+      : cardRect.left - (listRect.left + (parseFloat(style.paddingLeft) || 0));
+  if (Math.abs(delta) > 1) list.scrollBy?.({ behavior, left: delta });
+  getScrollContainer(list)?.scrollTo?.({ behavior, top: 0 });
+};
+
 const localeDir = (locale: ContentLocale) => (locale === 'ar' ? 'rtl' : 'ltr');
 
 type PanelPosition = 'right' | 'bottom';
@@ -665,6 +681,8 @@ const JourneyPreviewContent = ({
 
   const stopsRef = useRef<HTMLDivElement>(null);
   const spacerRef = useRef<HTMLDivElement>(null);
+  // The stop the visitor last scrolled to: the panel leaves its scroll alone for it.
+  const scrolledToRef = useRef<string | null>(null);
   const selectedStop = pois.find((poi) => poi.id === selectedAnnotationId);
   const selectedStopPoint = selectedStop ? getPoiPoint(selectedStop) : null;
 
@@ -683,6 +701,8 @@ const JourneyPreviewContent = ({
   // The selected stop (its pin clicked, or scrolled to) is brought out from under this panel,
   // and its card scrolled to the top of the panel, title first.
   useEffect(() => {
+    const scrolledTo = scrolledToRef.current === selectedStop?.id;
+    scrolledToRef.current = null;
     if (!selectedStop) {
       if (spacerRef.current) spacerRef.current.style.height = '0px';
       return undefined;
@@ -693,6 +713,15 @@ const JourneyPreviewContent = ({
       (child): child is HTMLElement => (child as HTMLElement).dataset.poiId === selectedStop.id
     );
     if (!stops || !card) return undefined;
+    // On a phone the cards sit side by side: the carousel moves to the card (unless the visitor
+    // swiped it there) and the sheet back to its heading.
+    if (isRowLayout(stops)) {
+      if (scrolledTo) getScrollContainer(stops)?.scrollTo?.({ behavior: 'smooth', top: 0 });
+      else scrollCardIntoRow(stops, card, 'smooth');
+      return undefined;
+    }
+    // A card the visitor scrolled up to stays where they left it.
+    if (scrolledTo) return undefined;
     scrollCardToTop(card, spacerRef.current, 'smooth');
 
     // Thumbnails of the stops above it that finish loading afterwards push the card down: keep
@@ -729,7 +758,36 @@ const JourneyPreviewContent = ({
     if (point) focusMapOnPoint(windowId, point);
     // Selecting it also highlights the pin on the map, like clicking the pin itself would.
     dispatchSelectAnnotation(windowId, poi.id);
+    // A stop already selected - scrolled to, or come back to with Back - opens its nested map
+    // when it's clicked.
+    if (site && poi.id === selectedAnnotationId && selectedStopLinkedMapManifestId && dispatchOpenNestedMap) {
+      dispatchOpenNestedMap(windowId, selectedStopLinkedMapManifestId, {
+        annotation: poi,
+        position,
+        previewAnnotationId: journey.id,
+        selectedAnnotationId: poi.id,
+      });
+    }
   };
+
+  // Site preset: scrolling the list (swiping the carousel on a phone) selects the stop it comes
+  // to, and focuses the map on it like stepping the tour does. Browsing doesn't open a nested map.
+  useScrollSelect({
+    enabled: site,
+    getColumnScroller: getScrollContainer,
+    layout: position,
+    listRef: stopsRef,
+    onSelect: (poiId) => {
+      const poi = pois.find((item) => item.id === poiId);
+      if (!poi) return;
+      scrolledToRef.current = poiId;
+      if (poi['dbf:linkedMap']) skipNextNestedOpen(windowId, poiId);
+      const point = getPoiPoint(poi);
+      if (point) focusMapOnPoint(windowId, point);
+      dispatchSelectAnnotation(windowId, poi.id);
+    },
+    selectedId: selectedAnnotationId,
+  });
 
   if (site) {
     // Stops are cards separated by a divider (`.dbf-map-poi*` class contract). Each card's

@@ -59,6 +59,7 @@ import {
 } from './sitePanelState';
 import { useSheetGestures } from './sheetGestures';
 import { isRowLayout, useScrollSelect } from './scrollSelect';
+import { AudioPlayer, audioUrl } from './audioPlayer';
 import { getTourPois } from './tourOrder';
 import { useFillView } from './fillView';
 import { requestPinFocus } from './sitePins';
@@ -96,6 +97,10 @@ type DbfMedia = {
   title: string | null;
   mediaType?: string | null;
   thumbnailUrl: string | null;
+  // An upload's or a Media Item's playable file (the audio player's recording).
+  url?: string | null;
+  mime?: string | null;
+  duration?: number | null;
 };
 
 type RawAnnotation = {
@@ -143,6 +148,16 @@ const LABELS: Record<ContentLocale, Record<string, string>> = {
     followJourney: 'اتبع الرحلة',
     preview: 'معاينة',
     showOnMap: 'عرض على الخريطة',
+    audio: 'تسجيل صوتي',
+    audioForward: 'تقديم 10 ثوانٍ',
+    audioMute: 'كتم الصوت',
+    audioPause: 'إيقاف مؤقت',
+    audioPlay: 'تشغيل',
+    audioRepeat: 'تكرار',
+    audioRestart: 'العودة إلى البداية',
+    audioRewind: 'رجوع 10 ثوانٍ',
+    audioSeek: 'موضع التشغيل',
+    audioSpeed: 'سرعة التشغيل',
   },
   en: {
     Journey: 'Journey',
@@ -159,6 +174,16 @@ const LABELS: Record<ContentLocale, Record<string, string>> = {
     followJourney: 'Follow the journey',
     preview: 'Preview',
     showOnMap: 'Show on map',
+    audio: 'Audio',
+    audioForward: 'Forward 10 seconds',
+    audioMute: 'Mute',
+    audioPause: 'Pause',
+    audioPlay: 'Play',
+    audioRepeat: 'Repeat',
+    audioRestart: 'Back to the start',
+    audioRewind: 'Back 10 seconds',
+    audioSeek: 'Playback position',
+    audioSpeed: 'Playback speed',
   },
 };
 
@@ -203,6 +228,43 @@ const IMAGE_FILE = /\.(avif|gif|jpe?g|png|svg|webp)$/i;
 // The image to show for a POI's media, if it has one. A Media Library upload's
 // `thumbnailUrl` is the uploaded file itself, which may be audio, video or a PDF - only an
 // image file is shown as one. IIIF Images and Media Items always carry an image thumbnail.
+// A site card's media (`.dbf-map-poi__media`): the audio player for a recording, else its image.
+// A recording is titled with its Media Item's title (English only on the wire), else the POI's.
+const SiteMedia = ({ locale, media, poiTitle }: { locale: ContentLocale; media?: DbfMedia | null; poiTitle: string }) => {
+  const labels = LABELS[locale];
+  const src = audioUrl(media);
+  if (media && src) {
+    const title = (media.source === 'media-item' && locale === 'en' && media.title) || poiTitle || labels.audio;
+    return (
+      <AudioPlayer
+        duration={media.duration}
+        labels={{
+          audio: labels.audio,
+          forward: labels.audioForward,
+          mute: labels.audioMute,
+          pause: labels.audioPause,
+          play: labels.audioPlay,
+          repeat: labels.audioRepeat,
+          restart: labels.audioRestart,
+          rewind: labels.audioRewind,
+          seek: labels.audioSeek,
+          speed: labels.audioSpeed,
+        }}
+        mime={media.mime}
+        src={src}
+        title={title}
+      />
+    );
+  }
+  const image = mediaImageUrl(media);
+  if (!image) return null;
+  return (
+    <div className="dbf-map-poi__media">
+      <img alt={media?.title ?? ''} src={image} />
+    </div>
+  );
+};
+
 export const mediaImageUrl = (media: DbfMedia | null | undefined): string | null => {
   const url = media?.thumbnailUrl;
   if (!url) return null;
@@ -842,11 +904,7 @@ const JourneyPreviewContent = ({
                     </h3>
                   </div>
                 </div>
-                {mediaImageUrl(media) && (
-                  <div className="dbf-map-poi__media">
-                    <img alt={media?.title ?? ''} src={mediaImageUrl(media) ?? undefined} />
-                  </div>
-                )}
+                <SiteMedia locale={locale} media={media} poiTitle={poiTitle} />
                 {description && (
                   // eslint-disable-next-line react/no-danger -- sanitised above
                   <div className="dbf-map-poi__text" dangerouslySetInnerHTML={{ __html: description }} />
@@ -1034,11 +1092,7 @@ const PoiPreviewContent = ({
                 <h3 className="dbf-map-poi__title">{title || labels.POI}</h3>
               </div>
             </div>
-            {mediaImageUrl(media) && (
-              <div className="dbf-map-poi__media">
-                <img alt={media?.title ?? ''} src={mediaImageUrl(media) ?? undefined} />
-              </div>
-            )}
+            <SiteMedia locale={locale} media={media} poiTitle={title} />
             {description && (
               // eslint-disable-next-line react/no-danger -- sanitised above
               <div className="dbf-map-poi__text" dangerouslySetInnerHTML={{ __html: description }} />

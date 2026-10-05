@@ -98,8 +98,9 @@ export const useSheetGestures = ({ bodyRef, enabled, headerRef, isRtl, windowId 
       if (!event.isPrimary || event.button !== 0) return;
       const target = event.target as HTMLElement;
       const fromHeader = header.contains(target);
-      // The close button stays a plain button; on the body, only touch swipes count.
-      if (target.closest('.dbf-map-panel__close') || (!fromHeader && event.pointerType === 'mouse')) return;
+      // The close button stays a plain button, and a slider (the audio player's) slides; on the
+      // body, only touch swipes count.
+      if (target.closest('.dbf-map-panel__close, input') || (!fromHeader && event.pointerType === 'mouse')) return;
       const height = sheet()?.getBoundingClientRect().height;
       if (!height) return;
       const row = target.closest<HTMLElement>('.dbf-map-panel__list');

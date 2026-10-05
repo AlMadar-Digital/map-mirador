@@ -58,6 +58,7 @@ import {
 } from './sitePanelState';
 import { useSheetGestures } from './sheetGestures';
 import { getTourPois } from './tourOrder';
+import { useFillView } from './fillView';
 import { requestPinFocus } from './sitePins';
 import { readLineStyle, useSitePins, type PinResource } from './sitePins';
 
@@ -1244,7 +1245,7 @@ type AnnotationListItem = { id?: string; resources?: AnnotationResourceLike[] };
 
 interface AnnotationsOverlayTargetProps {
   annotations?: AnnotationListItem[];
-  canvasWorld?: { offsetByCanvas?: (canvasId: string) => { x: number; y: number } };
+  canvasWorld?: { canvases?: { id: string }[]; offsetByCanvas?: (canvasId: string) => { x: number; y: number } };
   searchAnnotations?: AnnotationListItem[];
   selectAnnotation?: (windowId: string, annotationId: string) => void;
   selectedAnnotationId?: string | null;
@@ -1371,6 +1372,23 @@ const AnnotationsOverlayPoiClickWrapper = ({
     targetProps.windowId,
     dispatchUpdateViewport
   );
+  // Fill the view with the map, keeping every POI in it.
+  // Only POIs on a canvas the viewer shows: while another map loads (a nested map, Back), the
+  // annotations can arrive before their canvas, which has no position yet.
+  const shownCanvases = targetProps.canvasWorld?.canvases;
+  const fillPoints = pinResources
+    .filter(({ targetId }) => !shownCanvases || shownCanvases.some((canvas) => canvas.id === targetId))
+    .map(({ pointSelector, targetId }) => {
+      const offset = targetProps.canvasWorld?.offsetByCanvas?.(targetId) ?? { x: 0, y: 0 };
+      return { x: pointSelector.x + offset.x, y: pointSelector.y + offset.y };
+    });
+  useFillView({
+    enabled: site,
+    points: fillPoints,
+    storeViewport: dispatchUpdateViewport,
+    viewer: targetProps.viewer as Parameters<typeof useFillView>[0]['viewer'],
+    windowId: targetProps.windowId,
+  });
   const lineStyleKey = site ? JSON.stringify(readLineStyle(targetProps.viewer?.element)) : 'null';
   const lineStyle = useMemo(() => JSON.parse(lineStyleKey), [lineStyleKey]);
 

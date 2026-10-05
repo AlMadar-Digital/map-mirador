@@ -9,6 +9,8 @@ import { SHEET_SNAPS, setSheetSnap, stepTour, type SheetSnap } from './sitePanel
 
 // The open height, MapViewer's `defaultSidebarPanelHeight`.
 const HALF_SHEET_HEIGHT = 310;
+// The minimised sheet's peek: its handle and the top of its label (Figma "Overview 7").
+export const PEEK_SHEET_HEIGHT = 38;
 // The map left above a full sheet (Figma "Overview 10").
 const FULL_SHEET_TOP_GAP = 168;
 // A release faster than this (px/ms) moves on to the next height in its direction.
@@ -22,10 +24,10 @@ const SWIPE_MAX_ANGLE = Math.PI / 6;
 
 export type SnapHeights = Record<SheetSnap, number>;
 
-/** The sheet's heights in a window `containerHeight` px tall, with a `headerHeight` px header. */
-export const snapHeights = (headerHeight: number, containerHeight: number): SnapHeights => {
-  const full = Math.max(headerHeight, containerHeight - FULL_SHEET_TOP_GAP);
-  return { collapsed: headerHeight, full, half: Math.min(HALF_SHEET_HEIGHT, full) };
+/** The sheet's heights in a window `containerHeight` px tall. */
+export const snapHeights = (containerHeight: number): SnapHeights => {
+  const full = Math.max(PEEK_SHEET_HEIGHT, containerHeight - FULL_SHEET_TOP_GAP);
+  return { collapsed: PEEK_SHEET_HEIGHT, full, half: Math.min(HALF_SHEET_HEIGHT, full) };
 };
 
 /**
@@ -75,8 +77,7 @@ export const useSheetGestures = ({ bodyRef, enabled, headerRef, isRtl, windowId 
     if (!enabled || !body || !header) return undefined;
     const sheet = () => body.closest('aside');
     const mapWindow = () => body.closest<HTMLElement>('.mirador-window');
-    const heights = () =>
-      snapHeights(header.offsetHeight, mapWindow()?.clientHeight ?? window.innerHeight);
+    const heights = () => snapHeights(mapWindow()?.clientHeight ?? window.innerHeight);
 
     let press: Press | null = null;
     let swallowClick = false;

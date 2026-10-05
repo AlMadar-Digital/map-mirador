@@ -180,7 +180,8 @@ export const CompanionWindow = forwardRef((props, innerRef) => {
           }}
           disableDragging
           enableResizing={resizable ? resizeHandles : false}
-          minHeight={50}
+          // A host-sized panel sets its own heights (the site preset's sheet peeks at 38px).
+          minHeight={resizable ? 50 : 0}
           minWidth={position === 'left' ? 235 : 100}
         >
           {header && (

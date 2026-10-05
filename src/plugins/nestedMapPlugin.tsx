@@ -94,6 +94,9 @@ export const consumeSkipNestedOpen = (windowId: string, annotationId: string): b
 // loads (OpenSeadragonComponent), so this is applied right after that.
 const pendingViewport = new Map<string, { x?: number; y?: number; zoom?: number }>();
 
+/** True while Back is about to restore the parent map's view (fillView.ts leaves it alone). */
+export const hasPendingParentViewport = (windowId: string) => pendingViewport.has(windowId);
+
 type OsdViewer = {
   addOnceHandler: (name: string, handler: () => void) => void;
   removeHandler: (name: string, handler: () => void) => void;

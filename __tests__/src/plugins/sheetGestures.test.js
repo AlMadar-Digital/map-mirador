@@ -8,12 +8,12 @@ import {
   stepTour,
 } from '../../../src/plugins/sitePanelState.ts';
 
-const heights = snapHeights(56, 844); // a 390×844 phone
+const heights = snapHeights(844); // a 390×844 phone
 
 describe('sheet gestures', () => {
-  it('has a header, half and full height (full leaves 168px of map)', () => {
-    expect(heights).toEqual({ collapsed: 56, full: 676, half: 310 });
-    expect(snapHeights(56, 400)).toEqual({ collapsed: 56, full: 232, half: 232 });
+  it('has a peek, half and full height (full leaves 168px of map)', () => {
+    expect(heights).toEqual({ collapsed: 38, full: 676, half: 310 });
+    expect(snapHeights(400)).toEqual({ collapsed: 38, full: 232, half: 232 });
   });
 
   it('settles a slow release on the nearest height', () => {
@@ -26,7 +26,7 @@ describe('sheet gestures', () => {
     expect(pickSnap(320, 1, heights)).toBe('full');
     expect(pickSnap(300, -1, heights)).toBe('collapsed');
     expect(pickSnap(676, 1, heights)).toBe('full');
-    expect(pickSnap(56, -1, heights)).toBe('collapsed');
+    expect(pickSnap(38, -1, heights)).toBe('collapsed');
   });
 
   it('reads a fast, mostly sideways swipe as a tour step, mirrored right to left', () => {

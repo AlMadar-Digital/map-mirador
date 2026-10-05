@@ -5,10 +5,13 @@ import { addCompanionWindow, addWindow, receiveManifest, selectAnnotation, updat
 import { getCompanionWindows, getSelectedAnnotationId, getWindow } from '../../../src/state/selectors';
 import {
   backToParentMap,
+  consumeSkipNestedOpen,
   getLinkedMapManifestId,
+  getNestedOrigin,
   nestedMapPlugins,
   openNestedMap,
 } from '../../../src/plugins/nestedMapPlugin.tsx';
+import { NESTED_ORIGIN_ID } from '../../../src/plugins/previewIds.ts';
 import parentManifest from '../../fixtures/version-2/001.json';
 import nestedManifest from '../../fixtures/version-2/002.json';
 
@@ -109,6 +112,38 @@ describe('nestedMapPlugin', () => {
     });
   });
 
+  describe('site preset: opened from a POI', () => {
+    const origin = {
+      annotation: { 'dbf:kind': 'POI', id: 'frontispiece' },
+      position: 'right',
+      previewAnnotationId: 'journey',
+      selectedAnnotationId: 'frontispiece',
+    };
+    const previews = (store) => Object.values(getCompanionWindows(store.getState())).filter((cw) => cw.windowId === 'w');
+
+    it('keeps showing the POI it was opened from', () => {
+      const store = setupStore();
+      store.dispatch(openNestedMap('w', NESTED, origin));
+
+      expect(windowOf(store).manifestId).toBe(NESTED);
+      expect(getNestedOrigin(store.getState(), 'w')).toMatchObject(origin);
+      expect(previews(store)).toEqual([expect.objectContaining({ annotationid: NESTED_ORIGIN_ID, position: 'right' })]);
+    });
+
+    it("returns to the parent's selection and preview on Back, without reopening the nested map", () => {
+      const store = setupStore();
+      store.dispatch(openNestedMap('w', NESTED, origin));
+      store.dispatch(backToParentMap('w'));
+
+      expect(windowOf(store).manifestId).toBe(PARENT);
+      expect(getSelectedAnnotationId(store.getState(), { windowId: 'w' })).toBe('frontispiece');
+      expect(previews(store)).toEqual([expect.objectContaining({ annotationid: 'journey' })]);
+      expect(getNestedOrigin(store.getState(), 'w')).toBeNull();
+      expect(consumeSkipNestedOpen('w', 'frontispiece')).toBe(true);
+      expect(consumeSkipNestedOpen('w', 'frontispiece')).toBe(false);
+    });
+  });
+
   describe('Back button', () => {
     const [{ component: BackButton, mapStateToProps }] = nestedMapPlugins;
 
@@ -134,6 +169,20 @@ describe('nestedMapPlugin', () => {
 
       rerender(<BackButton backToParentMap={back} canGoBack language="ar" windowId="w" />);
       expect(screen.getByRole('button', { name: 'رجوع' })).toBeInTheDocument();
+    });
+
+    it('in the site preset: a plain .dbf-map__back that takes focus and goes back on Escape', async () => {
+      const back = vi.fn();
+      render(<BackButton backToParentMap={back} canGoBack language="en" site windowId="w" />);
+      const button = screen.getByRole('button', { name: 'Back' });
+
+      expect(button).toHaveClass('dbf-map__back');
+      expect(button).toHaveFocus();
+      const escape = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Escape' });
+      document.body.dispatchEvent(escape);
+
+      expect(back).toHaveBeenCalledWith('w');
+      expect(escape.defaultPrevented).toBe(true);
     });
   });
 });

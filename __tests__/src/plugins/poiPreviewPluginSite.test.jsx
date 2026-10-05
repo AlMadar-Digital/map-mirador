@@ -169,6 +169,70 @@ describe('poiPreviewPlugin site preset', () => {
     });
   });
 
+  describe('nested maps', () => {
+    const nestedPoi = { ...stop('n', 'The illuminated frontispiece', 1), 'dbf:journey': null };
+    const renderSite = (props) =>
+      render(
+        <PreviewContent
+          id="cw"
+          journeyPois={[]}
+          linkedMapManifestId={null}
+          locale="en"
+          position="right"
+          removeCompanionWindow={vi.fn()}
+          selectAnnotation={vi.fn()}
+          site
+          windowId="window"
+          {...props}
+        />,
+      );
+
+    it('opens a POI\'s nested map as soon as it is shown, with no "Open map" button', () => {
+      const openNestedMap = vi.fn();
+      renderSite({ annotation: nestedPoi, linkedMapManifestId: 'https://example.org/nested', openNestedMap });
+
+      expect(openNestedMap).toHaveBeenCalledWith('window', 'https://example.org/nested', {
+        annotation: nestedPoi,
+        position: 'right',
+        previewAnnotationId: 'n',
+        selectedAnnotationId: 'n',
+      });
+      expect(screen.queryByRole('button', { name: 'Open map' })).not.toBeInTheDocument();
+    });
+
+    it('shows the POI it was opened from without opening anything', () => {
+      const openNestedMap = vi.fn();
+      renderSite({ annotation: nestedPoi, carried: true, openNestedMap });
+
+      expect(screen.getByRole('heading', { name: 'The illuminated frontispiece' })).toBeInTheDocument();
+      expect(openNestedMap).not.toHaveBeenCalled();
+    });
+
+    it("opens a journey stop's nested map when the stop is selected", () => {
+      const openNestedMap = vi.fn();
+      const stops = [stop('a', 'The Start', 1), stop('b', 'Manzil Qastal', 2)];
+      renderSite({
+        annotation: journey,
+        journeyPois: stops,
+        openNestedMap,
+        selectedAnnotationId: 'b',
+        selectedStopLinkedMapManifestId: 'https://example.org/nested',
+      });
+
+      expect(openNestedMap).toHaveBeenCalledWith(
+        'window',
+        'https://example.org/nested',
+        expect.objectContaining({ annotation: stops[1], previewAnnotationId: 'journey', selectedAnnotationId: 'b' }),
+      );
+    });
+
+    it('shows nothing, not "not found", while the map is still loading', () => {
+      renderSite({ annotation: null, loading: true, openNestedMap: vi.fn() });
+
+      expect(screen.queryByText(/could not be found/)).not.toBeInTheDocument();
+    });
+  });
+
   describe('mediaImageUrl', () => {
     it('shows uploaded images, IIIF images and Media Item thumbnails, not uploaded audio', () => {
       expect(mediaImageUrl({ source: 'upload', thumbnailUrl: 'https://cdn/x/photo.JPG' })).toBe('https://cdn/x/photo.JPG');

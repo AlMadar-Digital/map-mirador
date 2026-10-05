@@ -21,7 +21,10 @@ type Viewer = {
   removeOverlay: (element: Element) => void;
   updateOverlay: (element: Element, location: OpenSeadragon.Point, placement: OpenSeadragon.Placement) => void;
 };
-type CanvasWorld = { offsetByCanvas?: (canvasId: string) => { x: number; y: number } };
+type CanvasWorld = {
+  canvases?: { id: string }[];
+  offsetByCanvas?: (canvasId: string) => { x: number; y: number };
+};
 
 interface UseSitePinsOptions {
   canvasWorld?: CanvasWorld;
@@ -32,7 +35,15 @@ interface UseSitePinsOptions {
   resources: PinResource[];
   selectedAnnotationId?: string | null;
   viewer?: Viewer | null;
+  windowId?: string;
 }
+
+// A pin to focus once it exists: Back returns focus to the POI the nested map was opened from.
+const pendingPinFocus = new Map<string, string>();
+
+export const requestPinFocus = (windowId: string, annotationId: string) => {
+  pendingPinFocus.set(windowId, annotationId);
+};
 
 // Events that would otherwise reach OpenSeadragon's canvas under the pin and start a pan or
 // count as a click on the map itself.
@@ -46,6 +57,7 @@ export const useSitePins = ({
   resources,
   selectedAnnotationId,
   viewer,
+  windowId,
 }: UseSitePinsOptions) => {
   const pinsRef = useRef(new Map<string, { anchor: HTMLElement; button: HTMLButtonElement }>());
   const onSelectRef = useRef(onSelect);
@@ -66,6 +78,9 @@ export const useSitePins = ({
     const seen = new Set<string>();
 
     resources.forEach((resource) => {
+      // Only pins on a canvas the viewer shows: while another map loads (a nested map, Back),
+      // the annotations can arrive before their canvas, which has no position yet.
+      if (canvasWorld?.canvases && !canvasWorld.canvases.some((canvas) => canvas.id === resource.targetId)) return;
       const offset = canvasWorld?.offsetByCanvas?.(resource.targetId) ?? { x: 0, y: 0 };
       const location = new OpenSeadragon.Point(resource.pointSelector.x + offset.x, resource.pointSelector.y + offset.y);
       let pin = pins.get(resource.id);
@@ -114,8 +129,15 @@ export const useSitePins = ({
       viewer.removeOverlay(pin.anchor);
       pins.delete(id);
     });
+
+    const focusId = windowId ? pendingPinFocus.get(windowId) : undefined;
+    const focusPin = focusId ? pins.get(focusId) : undefined;
+    if (windowId && focusPin) {
+      pendingPinFocus.delete(windowId);
+      focusPin.button.focus({ preventScroll: true });
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `resources` and `labels` are fresh each render; their keys say when they change
-  }, [canvasWorld, enabled, labelsKey, resourcesKey, selectedAnnotationId, viewer]);
+  }, [canvasWorld, enabled, labelsKey, resourcesKey, selectedAnnotationId, viewer, windowId]);
 
   useEffect(() => {
     const pins = pinsRef.current;

@@ -92,6 +92,8 @@ export const CompanionWindow = forwardRef((props, innerRef) => {
     defaultSidebarPanelHeight = 201,
     // false for content that brings its own title and close (MapViewer's site preset).
     header = true,
+    // false for a host-sized panel (MapViewer's site preset sizes its panel and sheet).
+    resizable = true,
   } = props;
   const [sizeRef, size] = useElementSize();
   const { t } = useTranslation();
@@ -177,7 +179,7 @@ export const CompanionWindow = forwardRef((props, innerRef) => {
             width: isBottom ? 'auto' : defaultSidebarPanelWidth,
           }}
           disableDragging
-          enableResizing={resizeHandles}
+          enableResizing={resizable ? resizeHandles : false}
           minHeight={50}
           minWidth={position === 'left' ? 235 : 100}
         >
@@ -256,6 +258,7 @@ CompanionWindow.propTypes = {
   defaultSidebarPanelWidth: PropTypes.number,
   direction: PropTypes.string.isRequired,
   header: PropTypes.bool,
+  resizable: PropTypes.bool,
   id: PropTypes.string.isRequired,
   isDisplayed: PropTypes.bool,
   onCloseClick: PropTypes.func,

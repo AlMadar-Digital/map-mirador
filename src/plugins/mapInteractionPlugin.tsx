@@ -17,6 +17,7 @@ import {
   openPreview,
   usePreviewPosition,
 } from './poiPreviewPlugin';
+import { registerTourStepper } from './sitePanelState';
 
 // Map "tour" interactions for MapViewer's rendering mode (issue #434): the mouse wheel steps
 // through the map's POIs one at a time instead of zooming - each step selects the POI, opens
@@ -292,6 +293,8 @@ const MapTourController = ({
       goToStep(direction);
     };
 
+    const unregisterStepper = registerTourStepper(windowId, goToStep);
+
     const handlers: [string, OsdHandler][] = [
       ['canvas-scroll', onCanvasScroll],
       ['canvas-press', onCanvasPress],
@@ -300,7 +303,10 @@ const MapTourController = ({
       ['canvas-drag-end', onCanvasDragEnd],
     ];
     handlers.forEach(([name, handler]) => viewer.addHandler(name, handler));
-    return () => handlers.forEach(([name, handler]) => viewer.removeHandler(name, handler));
+    return () => {
+      unregisterStepper();
+      handlers.forEach(([name, handler]) => viewer.removeHandler(name, handler));
+    };
   }, [viewer, windowId]);
 
   return null;

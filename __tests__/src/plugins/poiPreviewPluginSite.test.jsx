@@ -2,6 +2,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import PropTypes from 'prop-types';
 import { MAP_INFO_ID, mediaImageUrl, poiPreviewPlugins } from '../../../src/plugins/poiPreviewPlugin.tsx';
+import { resetSheet } from '../../../src/plugins/sitePanelState.ts';
 
 // Only the preview's own content is under test here, not Mirador's companion window chrome.
 vi.mock('../../../src/index', async (importOriginal) => {
@@ -123,6 +124,37 @@ describe('poiPreviewPlugin site preset', () => {
       await userEvent.click(screen.getByRole('button', { name: 'إغلاق اللوحة' }));
 
       expect(removeCompanionWindow).toHaveBeenCalledWith('window', 'cw');
+    });
+  });
+
+  describe('mobile sheet', () => {
+    afterEach(() => resetSheet('window'));
+
+    it('steps through its heights from the handle, by click and arrow keys', async () => {
+      const { container } = render(
+        <PreviewContent
+          annotation={journey}
+          id="cw"
+          journeyPois={[stop('a', 'The Start', 1)]}
+          locale="en"
+          position="bottom"
+          removeCompanionWindow={vi.fn()}
+          selectAnnotation={vi.fn()}
+          site
+          windowId="window"
+        />,
+      );
+      // eslint-disable-next-line testing-library/no-container, testing-library/no-node-access -- the data attribute is the contract
+      const body = () => container.querySelector('.dbf-map-panel__body');
+      expect(body()).toHaveAttribute('data-snap', 'half');
+
+      await userEvent.click(screen.getByRole('button', { name: 'Expand panel' }));
+      expect(body()).toHaveAttribute('data-snap', 'full');
+
+      screen.getByRole('button', { name: 'Shrink panel' }).focus();
+      await userEvent.keyboard('{ArrowDown}{ArrowDown}');
+      expect(body()).toHaveAttribute('data-snap', 'collapsed');
+      expect(screen.getByRole('button', { name: 'Show panel' })).toHaveAttribute('aria-expanded', 'false');
     });
   });
 

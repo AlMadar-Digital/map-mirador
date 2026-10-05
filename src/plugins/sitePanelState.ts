@@ -26,6 +26,53 @@ export const usePanelCollapsed = (windowId: string): boolean =>
     () => false
   );
 
+// On a phone the panel is a bottom sheet with three heights (Figma 2843:43867 and its
+// "Overview" variants): minimised to its header ("collapsed", as above), half, and full.
+export type SheetSnap = 'collapsed' | 'half' | 'full';
+export const SHEET_SNAPS: SheetSnap[] = ['collapsed', 'half', 'full'];
+
+const fullByWindow = new Map<string, boolean>();
+
+export const getSheetSnap = (windowId: string): SheetSnap => {
+  if (collapsedByWindow.get(windowId) === true) return 'collapsed';
+  return fullByWindow.get(windowId) === true ? 'full' : 'half';
+};
+
+export const setSheetSnap = (windowId: string, snap: SheetSnap) => {
+  if (getSheetSnap(windowId) === snap) return;
+  collapsedByWindow.set(windowId, snap === 'collapsed');
+  // Minimising keeps the open height, so reopening goes back to it.
+  if (snap !== 'collapsed') fullByWindow.set(windowId, snap === 'full');
+  listeners.forEach((listener) => listener());
+};
+
+/** Back to the default height, for a panel opened afresh. */
+export const resetSheet = (windowId: string) => {
+  fullByWindow.delete(windowId);
+  setPanelCollapsed(windowId, false);
+  listeners.forEach((listener) => listener());
+};
+
+export const useSheetSnap = (windowId: string): SheetSnap =>
+  useSyncExternalStore(
+    subscribe,
+    () => getSheetSnap(windowId),
+    () => 'half'
+  );
+
+// The map tour's step, registered by the tour controller (mapInteractionPlugin.tsx) so the
+// sheet can step it too: a horizontal swipe on the sheet turns to the next or previous POI.
+const tourSteppers = new Map<string, (direction: 1 | -1) => void>();
+
+export const registerTourStepper = (windowId: string, step: (direction: 1 | -1) => void) => {
+  tourSteppers.set(windowId, step);
+  return () => {
+    if (tourSteppers.get(windowId) === step) tourSteppers.delete(windowId);
+  };
+};
+
+export const stepTour = (windowId: string, direction: 1 | -1) => tourSteppers.get(windowId)?.(direction);
+
 type EventSource = {
   addHandler: (name: string, handler: () => void) => void;
   removeHandler: (name: string, handler: () => void) => void;

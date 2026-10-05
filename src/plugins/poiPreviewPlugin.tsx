@@ -38,7 +38,16 @@ import {
 import { MAP_INFO_ID, NESTED_ORIGIN_ID, POI_PREVIEW_CONTENT_ID } from './previewIds';
 
 export { MAP_INFO_ID, NESTED_ORIGIN_ID, POI_PREVIEW_CONTENT_ID };
-import { setPanelCollapsed, useMinimiseOnFirstInteraction, usePanelCollapsed } from './sitePanelState';
+import {
+  resetSheet,
+  setPanelCollapsed,
+  setSheetSnap,
+  useMinimiseOnFirstInteraction,
+  usePanelCollapsed,
+  useSheetSnap,
+  type SheetSnap,
+} from './sitePanelState';
+import { useSheetGestures } from './sheetGestures';
 import { readLineStyle, useSitePins, type PinResource } from './sitePins';
 
 // A "dumb" way to preview a POI/journey (issue #375): a Mirador companion window plugin,
@@ -111,6 +120,8 @@ const LABELS: Record<ContentLocale, Record<string, string>> = {
     closePanel: 'إغلاق اللوحة',
     collapse: 'إخفاء اللوحة',
     expand: 'إظهار اللوحة',
+    expandSheet: 'توسيع اللوحة',
+    shrinkSheet: 'تصغير اللوحة',
     discover: 'اكتشف الخريطة',
     followJourney: 'اتبع الرحلة',
     preview: 'معاينة',
@@ -125,6 +136,8 @@ const LABELS: Record<ContentLocale, Record<string, string>> = {
     closePanel: 'Close panel',
     collapse: 'Hide panel',
     expand: 'Show panel',
+    expandSheet: 'Expand panel',
+    shrinkSheet: 'Shrink panel',
     discover: 'Discover the map',
     followJourney: 'Follow the journey',
     preview: 'Preview',
@@ -255,7 +268,9 @@ const getOsdViewer = (windowId: string): OsdViewer | null =>
 type RunningAnimation = { animationName?: string; finished: Promise<unknown>; playState: string; transitionProperty?: string };
 
 const runningAnimations = (element: Element): RunningAnimation[] =>
-  ((element as Element & { getAnimations?: () => RunningAnimation[] }).getAnimations?.() ?? []).filter(
+  ((element as Element & { getAnimations?: (options?: { subtree: boolean }) => RunningAnimation[] }).getAnimations?.({
+    subtree: true,
+  }) ?? []).filter(
     (animation) => animation.playState === 'running'
   );
 
@@ -491,36 +506,57 @@ const SitePanel = ({
   showing,
   windowId,
 }: SitePanelProps) => {
+  const labels = LABELS[locale];
   const collapsed = usePanelCollapsed(windowId);
+  const snap = useSheetSnap(windowId);
+  const isSheet = position === 'bottom';
   useEffect(() => {
     setPanelCollapsed(windowId, false);
   }, [showing, windowId]);
 
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const headerRef = useRef<HTMLDivElement>(null);
+  useSheetGestures({ bodyRef, enabled: isSheet, headerRef, isRtl: locale === 'ar', windowId });
+
+  // The sheet's handle steps through its heights; arrow keys move up and down them.
+  const nextSnap: Record<SheetSnap, SheetSnap> = { collapsed: 'half', full: 'half', half: 'full' };
+  const handleLabel = { collapsed: labels.expand, full: labels.shrinkSheet, half: labels.expandSheet }[snap];
+  const onHandleKeyDown = (event: React.KeyboardEvent) => {
+    const order: SheetSnap[] = ['collapsed', 'half', 'full'];
+    const step = { ArrowDown: -1, ArrowUp: 1 }[event.key as 'ArrowDown' | 'ArrowUp'];
+    if (!step) return;
+    event.preventDefault();
+    setSheetSnap(windowId, order[Math.min(order.length - 1, Math.max(0, order.indexOf(snap) + step))]);
+  };
+
   return (
-    <CompanionWindow header={false} id={id} title={label} windowId={windowId}>
+    <CompanionWindow header={false} id={id} resizable={false} title={label} windowId={windowId}>
       <div
         className="dbf-map-panel__body"
         data-collapsed={collapsed ? 'true' : undefined}
         data-position={position}
+        data-snap={isSheet ? snap : undefined}
         dir={localeDir(locale)}
         lang={locale}
+        ref={bodyRef}
       >
-        <div className="dbf-map-panel__header">
-          {position === 'bottom' && (
+        <div className="dbf-map-panel__header" ref={headerRef}>
+          {isSheet && (
             <button
-              aria-expanded={!collapsed}
-              aria-label={collapsed ? LABELS[locale].expand : LABELS[locale].collapse}
+              aria-expanded={snap !== 'collapsed'}
+              aria-label={handleLabel}
               className="dbf-map-panel__handle"
-              onClick={() => setPanelCollapsed(windowId, !collapsed)}
+              onClick={() => setSheetSnap(windowId, nextSnap[snap])}
+              onKeyDown={onHandleKeyDown}
               type="button"
             />
           )}
           <h2 className="dbf-map-panel__label">{label}</h2>
           <button
-            aria-label={LABELS[locale].closePanel}
+            aria-label={labels.closePanel}
             className="dbf-map-panel__close"
             onClick={() => {
-              setPanelCollapsed(windowId, false);
+              resetSheet(windowId);
               dispatchRemoveCompanionWindow(windowId, id);
             }}
             type="button"

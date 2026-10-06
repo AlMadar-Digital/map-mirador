@@ -1,4 +1,5 @@
 import {
+  Fragment,
   useEffect,
   useMemo,
   useRef,
@@ -236,24 +237,28 @@ const SiteMedia = ({ locale, media, poiTitle }: { locale: ContentLocale; media?:
   if (media && src) {
     const title = (media.source === 'media-item' && locale === 'en' && media.title) || poiTitle || labels.audio;
     return (
-      <AudioPlayer
-        duration={media.duration}
-        labels={{
-          audio: labels.audio,
-          forward: labels.audioForward,
-          mute: labels.audioMute,
-          pause: labels.audioPause,
-          play: labels.audioPlay,
-          repeat: labels.audioRepeat,
-          restart: labels.audioRestart,
-          rewind: labels.audioRewind,
-          seek: labels.audioSeek,
-          speed: labels.audioSpeed,
-        }}
-        mime={media.mime}
-        src={src}
-        title={title}
-      />
+      // Keyed by its file: a panel that moves on to another POI starts a fresh player, rather
+      // than keeping the last one's recording, position and length.
+      <Fragment key={src}>
+        <AudioPlayer
+          duration={media.duration}
+          labels={{
+            audio: labels.audio,
+            forward: labels.audioForward,
+            mute: labels.audioMute,
+            pause: labels.audioPause,
+            play: labels.audioPlay,
+            repeat: labels.audioRepeat,
+            restart: labels.audioRestart,
+            rewind: labels.audioRewind,
+            seek: labels.audioSeek,
+            speed: labels.audioSpeed,
+          }}
+          mime={media.mime}
+          src={src}
+          title={title}
+        />
+      </Fragment>
     );
   }
   const image = mediaImageUrl(media);
@@ -777,7 +782,7 @@ const JourneyPreviewContent = ({
     if (!stops || !card) return undefined;
     // On a phone the cards sit side by side: the carousel moves to the card (unless the visitor
     // swiped it there) and the sheet back to its heading.
-    if (isRowLayout(stops)) {
+    if (site && isRowLayout(stops)) {
       if (scrolledTo) getScrollContainer(stops)?.scrollTo?.({ behavior: 'smooth', top: 0 });
       else scrollCardIntoRow(stops, card, 'smooth');
       return undefined;

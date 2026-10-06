@@ -12,8 +12,14 @@ export const SCROLL_SETTLE_MS = 150;
 // the panel (below the host's `scroll-margin-top`).
 const REACHED_AT = 0.3;
 
-/** Whether the host lays the list out side by side (the phone carousel) rather than in a column. */
-export const isRowLayout = (list: HTMLElement) => getComputedStyle(list).flexDirection.startsWith('row');
+/**
+ * Whether the host lays the list out side by side (the phone carousel) rather than in a column.
+ * Only a flex container counts: every element computes `flex-direction: row` by default.
+ */
+export const isRowLayout = (list: HTMLElement) => {
+  const style = getComputedStyle(list);
+  return /^(inline-)?flex$/.test(style.display) && style.flexDirection.startsWith('row');
+};
 
 /** The scroller's progress along its row, from 0 at its start, whichever way the text runs. */
 const rowProgress = (scroller: HTMLElement) => Math.abs(scroller.scrollLeft);

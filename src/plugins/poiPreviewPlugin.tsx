@@ -1,5 +1,8 @@
-import { useEffect, useRef, type ComponentType } from 'react';
+import { useEffect, useRef, useState, type ComponentType, type ReactNode } from 'react';
 import Button from '@mui/material/Button';
+import ToggleButton from '@mui/material/ToggleButton';
+import ToggleButtonGroup from '@mui/material/ToggleButtonGroup';
+import EditIcon from '@mui/icons-material/EditSharp';
 import MapIcon from '@mui/icons-material/MapSharp';
 import useMediaQuery from '@mui/material/useMediaQuery';
 import { useTheme } from '@mui/material/styles';
@@ -12,6 +15,7 @@ import {
   getAnnotations,
   getCompanionWindow,
   getCompanionWindows,
+  getCompanionWindowsForContent,
   getConfig,
   getSelectedAnnotationId,
   getVisibleCanvases,
@@ -40,6 +44,9 @@ import { getLinkedMapManifestId, openNestedMap, type LinkedMap } from './nestedM
 // canvas itself, and an SVG line joining those pins in journey order.
 
 const POI_PREVIEW_CONTENT_ID = 'mapsPoiPreview';
+// dbf-mirador-annotation-editor's own edit companion window (its annotationCreation plugin),
+// opened by the Edit button below exactly the way that package's annotation list opens it.
+const ANNOTATION_EDIT_CONTENT_ID = 'annotationCreation';
 
 type TextualAnnotationBody = {
   purpose: 'identifying' | 'describing';
@@ -71,6 +78,8 @@ type RawAnnotation = {
   'dbf:journey'?: { id: string; order: number } | null;
   // Set on a "Nested Map" point only: the map it opens (see nestedMapPlugin.tsx).
   'dbf:linkedMap'?: LinkedMap | null;
+  // Set by dbf-mirador-annotation-editor on the annotations it can edit.
+  maeData?: unknown;
   body?: TextualAnnotationBody[];
   target?: unknown;
 };
@@ -89,6 +98,8 @@ const LABELS: Record<ContentLocale, Record<string, string>> = {
   ar: {
     Journey: 'رحلة',
     POI: 'نقطة اهتمام',
+    contentLanguage: 'لغة المحتوى',
+    edit: 'تعديل',
     noStops: 'لا توجد محطات في هذه الرحلة بعد.',
     notFound: 'تعذر العثور على هذا العنصر - ربما تم حذفه.',
     openMap: 'فتح الخريطة',
@@ -98,6 +109,8 @@ const LABELS: Record<ContentLocale, Record<string, string>> = {
   en: {
     Journey: 'Journey',
     POI: 'POI',
+    contentLanguage: 'Content language',
+    edit: 'Edit',
     noStops: 'This journey has no stops yet.',
     notFound: 'This annotation could not be found - it may have been deleted.',
     openMap: 'Open map',
@@ -327,7 +340,70 @@ const scrollCardToTop = (card: HTMLElement, spacer: HTMLElement | null, behavior
 
 const localeDir = (locale: ContentLocale) => (locale === 'ar' ? 'rtl' : 'ltr');
 
+// Each content locale, named in its own language so it reads the same whatever the UI's.
+const LOCALE_NAMES: Record<ContentLocale, string> = { ar: 'العربية', en: 'English' };
+
+interface EditorToolbarProps {
+  canEdit: boolean;
+  contentLocale: ContentLocale;
+  isEditing: boolean;
+  onContentLocaleChange: (locale: ContentLocale) => void;
+  onEdit: () => void;
+  uiLocale: ContentLocale;
+}
+
+// Issue #457: in the editor, the preview gets a toggle between the English and Arabic content
+// (both are authored there, unlike the public map which only ever shows its own language) and
+// an Edit button standing in for the annotation list's own.
+const EditorToolbar = ({
+  canEdit,
+  contentLocale,
+  isEditing,
+  onContentLocaleChange,
+  onEdit,
+  uiLocale,
+}: EditorToolbarProps) => {
+  const labels = LABELS[uiLocale];
+  return (
+    <div
+      dir={localeDir(uiLocale)}
+      style={{ alignItems: 'center', display: 'flex', flexWrap: 'wrap', gap: 8, padding: '16px 16px 0' }}
+    >
+      <ToggleButtonGroup
+        aria-label={labels.contentLanguage}
+        exclusive
+        onChange={(_event, value: ContentLocale | null) => {
+          // Clicking the active button would otherwise unselect both.
+          if (value) onContentLocaleChange(value);
+        }}
+        size="small"
+        value={contentLocale}
+      >
+        {(['en', 'ar'] as const).map((locale) => (
+          <ToggleButton key={locale} lang={locale} sx={{ textTransform: 'none' }} value={locale}>
+            {LOCALE_NAMES[locale]}
+          </ToggleButton>
+        ))}
+      </ToggleButtonGroup>
+      {canEdit && (
+        <Button
+          // Like the annotation list's own Edit button: one edit window at a time.
+          disabled={isEditing}
+          onClick={onEdit}
+          size="small"
+          startIcon={<EditIcon />}
+          sx={{ marginInlineStart: 'auto' }}
+          variant="outlined"
+        >
+          {labels.edit}
+        </Button>
+      )}
+    </div>
+  );
+};
+
 interface JourneyPreviewContentProps {
+  editorToolbar: ReactNode;
   id: string;
   journey: RawAnnotation;
   locale: ContentLocale;
@@ -338,6 +414,7 @@ interface JourneyPreviewContentProps {
 }
 
 const JourneyPreviewContent = ({
+  editorToolbar,
   id,
   journey,
   locale,
@@ -406,6 +483,7 @@ const JourneyPreviewContent = ({
 
   return (
     <CompanionWindow id={id} title={journeyTitle || labels.Journey} windowId={windowId}>
+      {editorToolbar}
       <div dir={localeDir(locale)} lang={locale} ref={stopsRef} style={{ padding: 16 }}>
         {pois.length === 0 && <p>{labels.noStops}</p>}
         {pois.map((poi, index) => {
@@ -493,6 +571,7 @@ const JourneyPreviewContent = ({
 
 interface PoiPreviewContentProps {
   annotation: RawAnnotation | null;
+  editorToolbar: ReactNode;
   id: string;
   linkedMapManifestId: string | null;
   locale: ContentLocale;
@@ -502,6 +581,7 @@ interface PoiPreviewContentProps {
 
 const PoiPreviewContent = ({
   annotation,
+  editorToolbar,
   id,
   linkedMapManifestId,
   locale,
@@ -523,6 +603,7 @@ const PoiPreviewContent = ({
 
   return (
     <CompanionWindow id={id} title={title || (kind && labels[kind]) || labels.preview} windowId={windowId}>
+      {editorToolbar}
       <div dir={localeDir(locale)} lang={locale} style={{ padding: 16 }}>
         {!annotation && <p>{labels.notFound}</p>}
         {description && (
@@ -554,8 +635,12 @@ const PoiPreviewContent = ({
 };
 
 interface PreviewContentProps {
+  addCompanionWindow?: typeof addCompanionWindow;
   annotation: RawAnnotation | null;
+  canEdit?: boolean;
+  hasAnnotationEditor?: boolean;
   id: string;
+  isEditing?: boolean;
   journeyPois: RawAnnotation[];
   linkedMapManifestId: string | null;
   locale: ContentLocale;
@@ -566,8 +651,12 @@ interface PreviewContentProps {
 }
 
 const PreviewContent = ({
+  addCompanionWindow: dispatchAddCompanionWindow,
   annotation,
+  canEdit = false,
+  hasAnnotationEditor = false,
   id,
+  isEditing = false,
   journeyPois,
   linkedMapManifestId,
   locale,
@@ -576,12 +665,36 @@ const PreviewContent = ({
   selectedAnnotationId,
   windowId,
 }: PreviewContentProps) => {
+  // Starts in the UI's language; kept while the same preview window moves to another annotation.
+  const [contentLocale, setContentLocale] = useState<ContentLocale>(locale);
+  // Without the annotation editor (the public map), the preview always speaks the UI's language.
+  const shownLocale = hasAnnotationEditor ? contentLocale : locale;
+
+  const editorToolbar = hasAnnotationEditor && (
+    <EditorToolbar
+      canEdit={canEdit && !!annotation}
+      contentLocale={contentLocale}
+      isEditing={isEditing}
+      onContentLocaleChange={setContentLocale}
+      onEdit={() =>
+        annotation &&
+        dispatchAddCompanionWindow?.(windowId, {
+          annotationid: annotation.id,
+          content: ANNOTATION_EDIT_CONTENT_ID,
+          position: 'right',
+        })
+      }
+      uiLocale={locale}
+    />
+  );
+
   if (annotation && annotation['dbf:kind'] === 'Journey') {
     return (
       <JourneyPreviewContent
+        editorToolbar={editorToolbar}
         id={id}
         journey={annotation}
-        locale={locale}
+        locale={shownLocale}
         pois={journeyPois}
         selectAnnotation={dispatchSelectAnnotation}
         selectedAnnotationId={selectedAnnotationId}
@@ -592,9 +705,10 @@ const PreviewContent = ({
   return (
     <PoiPreviewContent
       annotation={annotation}
+      editorToolbar={editorToolbar}
       id={id}
       linkedMapManifestId={linkedMapManifestId}
-      locale={locale}
+      locale={shownLocale}
       openNestedMap={dispatchOpenNestedMap}
       windowId={windowId}
     />
@@ -610,17 +724,28 @@ const poiPreviewCompanionWindowPlugin = {
       | undefined;
     const items = getCanvasAnnotationItems(state, windowId);
     const annotation = items.find((item) => item.id === annotationId) ?? null;
+    const config = getConfig(state) as { annotation?: { adapter?: unknown; readonly?: boolean }; language?: string };
+    // dbf-mirador-annotation-editor is registered (as in the Strapi editor) when Mirador is
+    // configured with its storage adapter.
+    const hasAnnotationEditor = !!config.annotation?.adapter;
     return {
       annotation,
+      // Mirrors the annotation list's own Edit button: shown for the annotations the editor can
+      // edit, unless it's read-only, and disabled while an edit window is already open.
+      canEdit: hasAnnotationEditor && config.annotation?.readonly !== true && !!annotation?.maeData,
+      hasAnnotationEditor,
+      isEditing:
+        (getCompanionWindowsForContent(state, { content: ANNOTATION_EDIT_CONTENT_ID, windowId }) as unknown[])
+          .length > 0,
       journeyPois:
         annotation && annotation['dbf:kind'] === 'Journey' ? getOrderedJourneyPois(items, annotation.id) : [],
       // Only a Nested Map point whose map the host can resolve gets an "Open map" button.
       linkedMapManifestId: getLinkedMapManifestId(state, annotation?.['dbf:linkedMap']),
-      locale: getContentLocale((getConfig(state) as { language?: string }).language),
+      locale: getContentLocale(config.language),
       selectedAnnotationId: getSelectedAnnotationId(state, { windowId }) as string | undefined,
     };
   },
-  mapDispatchToProps: { openNestedMap, selectAnnotation },
+  mapDispatchToProps: { addCompanionWindow, openNestedMap, selectAnnotation },
 };
 
 type AnnotationPages = Record<string, { json?: { items?: unknown[] } }>;

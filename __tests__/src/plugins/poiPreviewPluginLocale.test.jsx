@@ -153,4 +153,108 @@ describe('poiPreviewPlugin locale', () => {
       expect(screen.getByText('This journey has no stops yet.')).toBeInTheDocument();
     });
   });
+
+  describe('in the annotation editor', () => {
+    const editablePoi = { ...poi, 'dbf:journey': null, maeData: {} };
+
+    /** Renders the preview as it appears alongside dbf-mirador-annotation-editor */
+    const renderEditorPreview = (props = {}) =>
+      render(
+        <PreviewContent
+          addCompanionWindow={vi.fn()}
+          annotation={editablePoi}
+          canEdit
+          hasAnnotationEditor
+          id="cw"
+          journeyPois={[]}
+          locale="en"
+          selectAnnotation={vi.fn()}
+          windowId="window"
+          {...props}
+        />,
+      );
+
+    it('switches the content between English and Arabic', async () => {
+      renderEditorPreview();
+
+      expect(screen.getByRole('button', { name: 'English' })).toHaveAttribute('aria-pressed', 'true');
+      expect(screen.getByText('City on the Nile')).toBeInTheDocument();
+
+      await userEvent.click(screen.getByRole('button', { name: 'العربية' }));
+
+      expect(screen.getByRole('heading', { name: 'القاهرة' })).toBeInTheDocument();
+      const description = screen.getByText('مدينة على النيل');
+      // eslint-disable-next-line testing-library/no-node-access -- `dir` sits on the content wrapper, which has no role
+      expect(description.closest('[dir]')).toHaveAttribute('dir', 'rtl');
+      expect(screen.queryByText('City on the Nile')).not.toBeInTheDocument();
+
+      // Clicking the active language again keeps it selected.
+      await userEvent.click(screen.getByRole('button', { name: 'العربية' }));
+      expect(screen.getByText('مدينة على النيل')).toBeInTheDocument();
+    });
+
+    it('switches a journey and its stops too', async () => {
+      renderEditorPreview({ annotation: journey, journeyPois: [poi] });
+
+      await userEvent.click(screen.getByRole('button', { name: 'العربية' }));
+
+      expect(screen.getByRole('heading', { name: 'على طول النيل' })).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: 'القاهرة' })).toBeInTheDocument();
+    });
+
+    it("opens the editor's edit window, like the annotation list's Edit button", async () => {
+      const addCompanionWindow = vi.fn();
+      renderEditorPreview({ addCompanionWindow });
+
+      await userEvent.click(screen.getByRole('button', { name: 'Edit' }));
+
+      expect(addCompanionWindow).toHaveBeenCalledWith('window', {
+        annotationid: 'poi',
+        content: 'annotationCreation',
+        position: 'right',
+      });
+    });
+
+    it('disables Edit while an edit window is open', () => {
+      renderEditorPreview({ isEditing: true });
+
+      expect(screen.getByRole('button', { name: 'Edit' })).toBeDisabled();
+    });
+
+    it('has no Edit button for an annotation it cannot edit', () => {
+      renderEditorPreview({ canEdit: false });
+
+      expect(screen.queryByRole('button', { name: 'Edit' })).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'English' })).toBeInTheDocument();
+    });
+
+    it('labels its controls in the UI language', () => {
+      renderEditorPreview({ locale: 'ar' });
+
+      expect(screen.getByRole('button', { name: 'تعديل' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'العربية' })).toHaveAttribute('aria-pressed', 'true');
+    });
+
+    describe('mapStateToProps', () => {
+      const state = ({ annotation = {}, companionWindows = {} } = {}) => ({
+        annotations: {},
+        companionWindows: { cw: { annotationid: 'poi' }, ...companionWindows },
+        config: { annotation },
+        windows: { window: { companionWindowIds: ['cw', ...Object.keys(companionWindows)] } },
+      });
+      const props = (s) => mapStateToProps(s, { id: 'cw', windowId: 'window' });
+
+      it('detects the annotation editor from its storage adapter', () => {
+        expect(props(state()).hasAnnotationEditor).toBe(false);
+        expect(props(state({ annotation: { adapter: () => {} } })).hasAnnotationEditor).toBe(true);
+      });
+
+      it('knows when an edit window is open', () => {
+        expect(props(state()).isEditing).toBe(false);
+        expect(
+          props(state({ companionWindows: { edit: { content: 'annotationCreation', windowId: 'window' } } })).isEditing,
+        ).toBe(true);
+      });
+    });
+  });
 });

@@ -146,12 +146,20 @@ describe('poiPreviewPlugin site preset', () => {
           />
         </section>,
       );
+      // Escape elsewhere on the host page leaves the map alone.
+      const elsewhere = document.body.appendChild(document.createElement('input'));
+      const outside = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Escape' });
+      elsewhere.dispatchEvent(outside);
+      expect(removeCompanionWindow).not.toHaveBeenCalled();
+      expect(outside.defaultPrevented).toBe(false);
+      elsewhere.remove();
+
       const escape = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Escape' });
-      document.body.dispatchEvent(escape);
+      // eslint-disable-next-line testing-library/no-container, testing-library/no-node-access -- the panel's own element
+      container.querySelector('.dbf-map-panel__body').dispatchEvent(escape);
 
       expect(removeCompanionWindow).toHaveBeenCalledWith('window', 'cw');
       expect(escape.defaultPrevented).toBe(true);
-      expect(container).toBeTruthy();
     });
   });
 

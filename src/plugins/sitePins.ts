@@ -39,7 +39,8 @@ interface UseSitePinsOptions {
   locale?: 'ar' | 'en';
   // POI ids in tour order (tourOrder.ts): the pins' order in the page.
   order?: string[];
-  onSelect: (annotationId: string) => void;
+  // `browsing` when the arrow keys moved along the pins, rather than a pin being pressed.
+  onSelect: (annotationId: string, how?: { browsing?: boolean }) => void;
   resources: PinResource[];
   selectedAnnotationId?: string | null;
   viewer?: Viewer | null;
@@ -125,7 +126,7 @@ export const useSitePins = ({
     const nextId = ids[target];
     if (!nextId || nextId === id) return;
     pinsRef.current.get(nextId)?.button.focus({ preventScroll: true });
-    onSelectRef.current(nextId);
+    onSelectRef.current(nextId, { browsing: true });
   };
   const onPinKeyDownRef = useRef(onPinKeyDown);
   useEffect(() => {

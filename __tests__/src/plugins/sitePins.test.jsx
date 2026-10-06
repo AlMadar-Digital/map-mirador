@@ -85,11 +85,12 @@ describe('useSitePins', () => {
 
     buttons[0].focus();
     buttons[0].dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'ArrowRight' }));
-    expect(onSelect).toHaveBeenCalledWith('a');
+    // Arrowing along the pins browses (no nested map opens), unlike pressing one.
+    expect(onSelect).toHaveBeenCalledWith('a', { browsing: true });
     expect(buttons[1]).toHaveFocus();
 
     buttons[1].dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'End' }));
-    expect(onSelect).toHaveBeenLastCalledWith('b');
+    expect(onSelect).toHaveBeenLastCalledWith('b', { browsing: true });
 
     requestPinFocus('keys', 'c');
     expect(buttons[0]).toHaveFocus();

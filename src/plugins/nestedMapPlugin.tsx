@@ -19,6 +19,7 @@ import {
 } from '../index';
 import { NESTED_ORIGIN_ID, POI_PREVIEW_CONTENT_ID } from './previewIds';
 import { requestPinFocus } from './sitePins';
+import { isInsideMap } from './sitePanelState';
 
 // Nested maps (issue #427, following #407): a "Nested Map" point is a POI whose
 // `dbf:linkedMap` points at another map. Opening it swaps the map shown in the same Mirador
@@ -227,14 +228,15 @@ interface SiteBackButtonProps {
 /**
  * The site preset's Back: a plain button in the top start corner, where the host's Close sits
  * (`.dbf-map__back`, styled by the host). It takes focus when the nested map opens, and Escape
- * goes back before it would close the whole view (the host listens in the bubble phase).
+ * pressed in the map goes back before it would close the whole view (the host listens in the
+ * bubble phase).
  */
 const SiteBackButton = ({ label, onBack }: SiteBackButtonProps) => {
   const ref = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     ref.current?.focus();
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape' || event.defaultPrevented) return;
+      if (event.key !== 'Escape' || event.defaultPrevented || !isInsideMap(event, ref.current)) return;
       event.preventDefault();
       onBack();
     };

@@ -173,13 +173,24 @@ describe('nestedMapPlugin', () => {
 
     it('in the site preset: a plain .dbf-map__back that takes focus and goes back on Escape', async () => {
       const back = vi.fn();
-      render(<BackButton backToParentMap={back} canGoBack language="en" site windowId="w" />);
+      render(
+        <section className="mirador-window">
+          <BackButton backToParentMap={back} canGoBack language="en" site windowId="w" />
+        </section>,
+      );
       const button = screen.getByRole('button', { name: 'Back' });
 
       expect(button).toHaveClass('dbf-map__back');
       expect(button).toHaveFocus();
+
+      // Escape elsewhere on the host page leaves the map alone.
+      const elsewhere = document.body.appendChild(document.createElement('input'));
+      elsewhere.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Escape' }));
+      expect(back).not.toHaveBeenCalled();
+      elsewhere.remove();
+
       const escape = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Escape' });
-      document.body.dispatchEvent(escape);
+      button.dispatchEvent(escape);
 
       expect(back).toHaveBeenCalledWith('w');
       expect(escape.defaultPrevented).toBe(true);

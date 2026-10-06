@@ -49,14 +49,15 @@ import { MAP_INFO_ID, NESTED_ORIGIN_ID, POI_PREVIEW_CONTENT_ID } from './preview
 export { MAP_INFO_ID, NESTED_ORIGIN_ID, POI_PREVIEW_CONTENT_ID };
 import {
   consumePanelFocus,
+  isInsideMap,
   resetSheet,
   setPanelCollapsed,
   setSheetSnap,
+  type SheetSnap,
   useMinimiseOnFirstInteraction,
   usePanelCollapsed,
   usePanelFocusRequest,
   useSheetSnap,
-  type SheetSnap,
 } from './sitePanelState';
 import { useSheetGestures } from './sheetGestures';
 import { isRowLayout, useScrollSelect } from './scrollSelect';
@@ -657,12 +658,12 @@ const SitePanel = ({
     closeRef.current = close;
   });
 
-  // Escape closes the open panel before it would close the whole view (the host listens in the
-  // bubble phase). Inside a nested map, Escape is Back's first.
+  // Escape pressed in the map closes the open panel before it would close the whole view (the
+  // host listens in the bubble phase). Inside a nested map, Escape is Back's first.
   useEffect(() => {
     if (collapsed) return undefined;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape' || event.defaultPrevented) return;
+      if (event.key !== 'Escape' || event.defaultPrevented || !isInsideMap(event, bodyRef.current)) return;
       const mapWindow = bodyRef.current?.closest('.mirador-window');
       if (!mapWindow || mapWindow.querySelector('.dbf-map__back')) return;
       event.preventDefault();
@@ -1466,7 +1467,14 @@ const AnnotationsOverlayPoiClickWrapper = ({
     labels,
     locale,
     order: tourOrder,
-    onSelect: (annotationId) => {
+    onSelect: (annotationId, { browsing } = {}) => {
+      // Arrowing along the pins only browses: a POI with a nested map doesn't open it.
+      if (browsing) {
+        const browsed = annotationPagesItems(annotationPages).find((candidate) => candidate.id === annotationId);
+        if (browsed?.['dbf:linkedMap']) skipNextNestedOpen(targetProps.windowId, annotationId);
+        selectAnnotationAndMaybePreview(targetProps.windowId, annotationId);
+        return;
+      }
       // Pressing the selected pin of a POI with a nested map opens it again (after Back).
       const item = annotationId === targetProps.selectedAnnotationId
         ? annotationPagesItems(annotationPages).find((candidate) => candidate.id === annotationId)

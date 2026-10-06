@@ -112,6 +112,15 @@ export const useMinimiseOnFirstInteraction = (
 // leaves focus where it is.
 const panelFocusRequests = new Map<string, number>();
 
+/**
+ * Whether a key press happened inside the map `element` is part of (its Mirador window), so the
+ * site preset's Escape handling leaves the rest of the host page - and any other map on it - alone.
+ */
+export const isInsideMap = (event: Event, element: Element | null | undefined): boolean => {
+  const mapWindow = element?.closest('.mirador-window');
+  return !!mapWindow && event.target instanceof Node && mapWindow.contains(event.target);
+};
+
 export const requestPanelFocus = (windowId: string) => {
   panelFocusRequests.set(windowId, (panelFocusRequests.get(windowId) ?? 0) + 1);
   listeners.forEach((listener) => listener());

@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import PropTypes from 'prop-types';
-import { getContentLocale, poiPreviewPlugins } from '../../../src/plugins/poiPreviewPlugin.tsx';
+import { editInPlaceOfPreview, getContentLocale, poiPreviewPlugins } from '../../../src/plugins/poiPreviewPlugin.tsx';
 
 // Only the preview's own content is under test here, not Mirador's companion window chrome.
 vi.mock('../../../src/index', async (importOriginal) => {
@@ -161,9 +161,9 @@ describe('poiPreviewPlugin locale', () => {
     const renderEditorPreview = (props = {}) =>
       render(
         <PreviewContent
-          addCompanionWindow={vi.fn()}
           annotation={editablePoi}
           canEdit
+          editInPlaceOfPreview={vi.fn()}
           hasAnnotationEditor
           id="cw"
           journeyPois={[]}
@@ -202,16 +202,43 @@ describe('poiPreviewPlugin locale', () => {
       expect(screen.getByRole('heading', { name: 'القاهرة' })).toBeInTheDocument();
     });
 
-    it("opens the editor's edit window, like the annotation list's Edit button", async () => {
-      const addCompanionWindow = vi.fn();
-      renderEditorPreview({ addCompanionWindow });
+    it("opens the editor's edit window in place of this preview", async () => {
+      const editInPlaceOfPreviewMock = vi.fn();
+      renderEditorPreview({ editInPlaceOfPreview: editInPlaceOfPreviewMock });
 
       await userEvent.click(screen.getByRole('button', { name: 'Edit' }));
 
-      expect(addCompanionWindow).toHaveBeenCalledWith('window', {
-        annotationid: 'poi',
-        content: 'annotationCreation',
-        position: 'right',
+      expect(editInPlaceOfPreviewMock).toHaveBeenCalledWith('window', 'cw', 'poi');
+    });
+
+    describe('editInPlaceOfPreview (issue #457)', () => {
+      it('closes the companion windows beside the map but the sidebar, and remembers the preview', () => {
+        const companionWindows = {
+          cw: { annotationid: 'journey', content: 'mapsPoiPreview', id: 'cw', position: 'right', windowId: 'window' },
+          info: { content: 'info', id: 'info', position: 'far-right', windowId: 'window' },
+          other: { content: 'mapsPoiPreview', id: 'other', position: 'right', windowId: 'elsewhere' },
+          side: { content: 'annotations', id: 'side', position: 'left', windowId: 'window' },
+        };
+        const dispatch = vi.fn();
+        editInPlaceOfPreview('window', 'cw', 'poi')(dispatch, () => ({ companionWindows }));
+        const actions = dispatch.mock.calls.map(([action]) => action);
+
+        expect(actions.filter(({ type }) => type === 'mirador/REMOVE_COMPANION_WINDOW').map(({ id }) => id)).toEqual([
+          'cw',
+          'info',
+        ]);
+        expect(actions.at(-1)).toEqual(
+          expect.objectContaining({
+            payload: expect.objectContaining({
+              annotationid: 'poi',
+              content: 'annotationCreation',
+              position: 'right',
+              returnToPreview: { annotationid: 'journey', position: 'right' },
+            }),
+            type: 'mirador/ADD_COMPANION_WINDOW',
+            windowId: 'window',
+          }),
+        );
       });
     });
 

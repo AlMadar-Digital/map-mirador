@@ -100,15 +100,15 @@ export const AudioPlayer = ({ duration: knownDuration = null, labels, mime = nul
     element.muted = muted;
   }, [muted, rate, repeat]);
 
-  // A player taken off the page (its card closed) stops.
-  useEffect(
-    () => () => {
-      const audio = audioRef.current;
-      if (playingNow === audio) playingNow = null;
-      audio?.pause();
-    },
-    []
-  );
+  // A player taken off the page (its card closed) stops. The element is captured now: React
+  // clears the ref before this cleanup runs.
+  useEffect(() => {
+    const element = audioRef.current;
+    return () => {
+      if (playingNow === element) playingNow = null;
+      element?.pause();
+    };
+  }, []);
 
   const audio = () => audioRef.current;
   const seekTo = (time: number) => {

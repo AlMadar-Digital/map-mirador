@@ -64,10 +64,6 @@ export const defaultMapViewerConfig = {
     // instead. `highlightAllAnnotations` still draws markers on the canvas regardless.
     sideBarOpenByDefault: false,
     highlightAllAnnotations: true,
-    // The site's preview panel is 480px wide (Figma 2843:43435); on a phone it is a 310px
-    // bottom sheet (2843:43867).
-    defaultSidebarPanelWidth: 480,
-    defaultSidebarPanelHeight: 310,
     panels: {
       canvas: false,
     },
@@ -75,10 +71,21 @@ export const defaultMapViewerConfig = {
   workspaceControlPanel: {
     enabled: false,
   },
-  // MapViewer is the public site's viewer: its host page styles the map UI through the
-  // `.dbf-map*` class contract, so Mirador's own styles go first and lose ties to it.
+};
+
+/**
+ * What the site preset adds (`maps.site`): the public site's markup, styled by its host page
+ * through the `.dbf-map*` class contract, so Mirador's own styles go first and lose ties to it.
+ */
+export const siteMapViewerConfig = {
   styles: {
     prepend: true,
+  },
+  window: {
+    // The site's preview panel is 480px wide (Figma 2843:43435); on a phone it is a 310px
+    // bottom sheet (2843:43867).
+    defaultSidebarPanelWidth: 480,
+    defaultSidebarPanelHeight: 310,
   },
 };
 
@@ -103,7 +110,7 @@ export const MAP_VIEWER_LANGUAGES = ['en', 'ar'];
  * the zoom controls still zoom. On a touch screen, a quick horizontal swipe steps through them
  * the same way, while a slower drag still pans.
  */
-export function MapViewer({ getLinkedMapManifestId = undefined, lang = 'en', manifestId }) {
+export function MapViewer({ getLinkedMapManifestId = undefined, lang = 'en', manifestId, site = true }) {
   const baseId = useId().replace(/:/g, '');
   const wrapperRef = useRef(null);
   const instanceRef = useRef(null);
@@ -129,12 +136,18 @@ export function MapViewer({ getLinkedMapManifestId = undefined, lang = 'en', man
     const instance = viewer(
       {
         ...defaultMapViewerConfig,
+        ...(site
+          ? {
+              styles: siteMapViewerConfig.styles,
+              window: { ...defaultMapViewerConfig.window, ...siteMapViewerConfig.window },
+            }
+          : {}),
         id: container.id,
         language: langRef.current,
         maps: {
-          // The preview renders the site's markup (`.dbf-map-poi*` class contract) rather
-          // than the annotation editor's own; the editor never sets this.
-          site: true,
+          // The site preset: the public site's markup (`.dbf-map-poi*` class contract) rather
+          // than Mirador's own; the annotation editor never sets this.
+          site,
           getLinkedMapManifestId: hasLinkedMapResolver
             ? (linkedMap) => getLinkedMapManifestIdRef.current?.(linkedMap)
             : undefined,
@@ -150,7 +163,7 @@ export function MapViewer({ getLinkedMapManifestId = undefined, lang = 'en', man
       instance.unmount();
       container.remove();
     };
-  }, [baseId, hasLinkedMapResolver, manifestId]);
+  }, [baseId, hasLinkedMapResolver, manifestId, site]);
 
   useEffect(() => {
     const store = instanceRef.current?.store;
@@ -179,4 +192,6 @@ MapViewer.propTypes = {
   lang: PropTypes.oneOf(MAP_VIEWER_LANGUAGES),
   /** URL of the IIIF manifest to render as a map. */
   manifestId: PropTypes.string.isRequired,
+  /** The site preset: the public site's map UI, which its host page styles (`.dbf-map*`). Off, Mirador's own UI. */
+  site: PropTypes.bool,
 };

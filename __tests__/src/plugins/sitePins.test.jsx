@@ -1,6 +1,6 @@
 /* eslint-disable testing-library/no-node-access -- the pins live in OpenSeadragon overlays, outside any rendered React tree */
 import { renderHook } from '@testing-library/react';
-import { pinLabel, requestPinFocus, useSitePins } from '../../../src/plugins/sitePins.ts';
+import { pinLabel, readLineStyle, requestPinFocus, useSitePins } from '../../../src/plugins/sitePins.ts';
 import { consumePanelFocus } from '../../../src/plugins/sitePanelState.ts';
 
 /** A stand-in OpenSeadragon viewer that keeps its overlays in a list */
@@ -24,6 +24,17 @@ const labels = new Map([
   ['b', 'The crown'],
   ['c', 'Mount'],
 ]);
+
+describe('readLineStyle', () => {
+  it("leaves the authored line alone when the host sets none of it, and reads the host's dash", () => {
+    const element = document.body.appendChild(document.createElement('div'));
+    expect(readLineStyle(element)).toBeNull();
+
+    element.style.setProperty('--dbf-map-line-dash', '6, 4');
+    expect(readLineStyle(element)).toMatchObject({ lineDash: [6, 4] });
+    element.remove();
+  });
+});
 
 describe('useSitePins', () => {
   it('adds a numbered, labelled pin button per POI and marks the selected one', () => {
@@ -60,6 +71,9 @@ describe('useSitePins', () => {
     expect(pinLabel('التاج', { count: 4, number: 2 }, 'ar')).toBe('التاج، المحطة 2 من 4');
     expect(pinLabel('', { count: 4, number: 2 }, 'en')).toBe('stop 2 of 4');
     expect(pinLabel('Mount', null, 'en')).toBe('Mount');
+    // A lone POI with no title in this language still gets a name.
+    expect(pinLabel('', null, 'en')).toBe('Point of interest');
+    expect(pinLabel('', null, 'ar')).toBe('نقطة اهتمام');
   });
 
   it('puts the pins in tour order, one tab stop, with the arrow keys moving along them', () => {

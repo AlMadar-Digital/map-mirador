@@ -1,5 +1,11 @@
 import { act, renderHook } from '@testing-library/react';
-import { setPanelCollapsed, useMinimiseOnFirstInteraction, usePanelCollapsed } from '../../../src/plugins/sitePanelState.ts';
+import {
+  consumeOpenMinimised,
+  openNextMinimised,
+  setPanelCollapsed,
+  useMinimiseOnFirstInteraction,
+  usePanelCollapsed,
+} from '../../../src/plugins/sitePanelState.ts';
 
 /** A stand-in OpenSeadragon viewer that records its event handlers */
 const fakeViewer = () => {
@@ -15,6 +21,16 @@ const fakeViewer = () => {
     },
   };
 };
+
+describe('openNextMinimised', () => {
+  it("asks a window's next panel, once, to open minimised", () => {
+    expect(consumeOpenMinimised('w')).toBe(false);
+    openNextMinimised('w');
+    expect(consumeOpenMinimised('other')).toBe(false);
+    expect(consumeOpenMinimised('w')).toBe(true);
+    expect(consumeOpenMinimised('w')).toBe(false);
+  });
+});
 
 describe('useMinimiseOnFirstInteraction', () => {
   afterEach(() => setPanelCollapsed('window', false));

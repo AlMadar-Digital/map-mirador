@@ -67,7 +67,8 @@ export const requestPinFocus = (windowId: string, annotationId: string) => {
 
 /** A pin's accessible name: its title, and its place in the journey when it is a stop. */
 export const pinLabel = (title: string, stop: { count: number; number: number } | null, locale: 'ar' | 'en') => {
-  if (!stop) return title;
+  // A lone POI with no title in this language still needs a name.
+  if (!stop) return title || (locale === 'ar' ? 'نقطة اهتمام' : 'Point of interest');
   const where = locale === 'ar' ? `المحطة ${stop.number} من ${stop.count}` : `stop ${stop.number} of ${stop.count}`;
   if (!title) return where;
   return locale === 'ar' ? `${title}، ${where}` : `${title}, ${where}`;
@@ -269,6 +270,8 @@ export const readLineStyle = (element?: Element | null) => {
     .getPropertyValue('--dbf-map-line-dash')
     .trim()
     .split(/[\s,]+/)
+    // An unset property splits to [''], which isn't a dash of 0.
+    .filter(Boolean)
     .map(Number)
     .filter((length) => Number.isFinite(length) && length >= 0);
   const curve = cssNumber(style, '--dbf-map-line-curve') === 1;

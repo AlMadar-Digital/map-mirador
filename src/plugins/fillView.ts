@@ -72,8 +72,10 @@ type Viewer = {
   };
 };
 
-// The images already filled, so a map is filled once however it got here.
-const filled = new WeakSet<object>();
+// The images already filled, so a map is filled once however it got here - and how each was
+// filled: the view it was given and how many POIs it framed, so POIs that arrive after the
+// image's first tile can still be taken in while the visitor hasn't moved the map.
+const filled = new WeakMap<object, { center: Point; count: number; zoom: number }>();
 
 interface UseFillViewOptions {
   enabled: boolean;
@@ -91,6 +93,16 @@ export const useFillView = ({ enabled, points, storeViewport, viewer, windowId }
     pointsRef.current = points;
   });
 
+  // Fills the view with an image, framing the current POIs.
+  const applyFill = (target: Viewer, item: { getBounds: () => Rect }) => {
+    const bounds = fillViewBounds(item.getBounds(), target.viewport.getContainerSize(), pointsRef.current);
+    target.viewport.fitBounds(new OpenSeadragon.Rect(bounds.x, bounds.y, bounds.width, bounds.height), true);
+    const center = target.viewport.getCenter(true);
+    const zoom = target.viewport.getZoom(true);
+    filled.set(item, { center, count: pointsRef.current.length, zoom });
+    storeViewport?.(windowId, { x: center.x, y: center.y, zoom });
+  };
+
   useEffect(() => {
     if (!enabled || !viewer) return undefined;
     let frame = 0;
@@ -98,11 +110,7 @@ export const useFillView = ({ enabled, points, storeViewport, viewer, windowId }
       frame = requestAnimationFrame(() => {
         const item = viewer.world.getItemAt(0);
         if (!item || filled.has(item)) return;
-        filled.add(item);
-        const target = fillViewBounds(item.getBounds(), viewer.viewport.getContainerSize(), pointsRef.current);
-        viewer.viewport.fitBounds(new OpenSeadragon.Rect(target.x, target.y, target.width, target.height), true);
-        const center = viewer.viewport.getCenter(true);
-        storeViewport?.(windowId, { x: center.x, y: center.y, zoom: viewer.viewport.getZoom(true) });
+        applyFill(viewer, item);
       });
     };
     // A map shown afresh (not a parent restored by Back) fills the view once its first tile is in.
@@ -119,4 +127,21 @@ export const useFillView = ({ enabled, points, storeViewport, viewer, windowId }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `storeViewport` is a bound action creator
   }, [enabled, viewer, windowId]);
+
+  // The annotations load separately from the image: POIs arriving after the first fit are taken
+  // in, unless the visitor has moved the map since.
+  const pointsKey = points.map(({ x, y }) => `${x},${y}`).join(';');
+  useEffect(() => {
+    if (!enabled || !viewer) return;
+    const item = viewer.world.getItemAt(0);
+    const fit = item ? filled.get(item) : undefined;
+    if (!item || !fit || points.length <= fit.count) return;
+    const center = viewer.viewport.getCenter(true);
+    const zoom = viewer.viewport.getZoom(true);
+    const tolerance = item.getBounds().width * 1e-4;
+    const unmoved =
+      Math.abs(zoom - fit.zoom) <= fit.zoom * 1e-4 && Math.hypot(center.x - fit.center.x, center.y - fit.center.y) <= tolerance;
+    if (unmoved) applyFill(viewer, item);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `points` is captured by `pointsKey`
+  }, [enabled, pointsKey, viewer]);
 };

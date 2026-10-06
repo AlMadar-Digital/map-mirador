@@ -23,7 +23,7 @@ import {
   usePreviewPosition,
   type ContentLocale,
 } from './poiPreviewPlugin';
-import { setPanelCollapsed, usePanelCollapsed } from './sitePanelState';
+import { openNextMinimised, setPanelCollapsed, usePanelCollapsed } from './sitePanelState';
 import { pinLabel } from './sitePins';
 
 // Read by screen readers only (the usual visually-hidden recipe).
@@ -124,6 +124,21 @@ const SiteMapTools = ({
     openMapInfo();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- once, when the map's info first arrives
   }, [site, hasMapInfo, previewId]);
+
+  // On a phone the sheet has no tab: closing it brings "Discover the map" back minimised to its
+  // header (the design's peek), so the map's title and description stay a handle away.
+  const hadPanelRef = useRef(false);
+  useEffect(() => {
+    if (previewId) {
+      hadPanelRef.current = true;
+      return;
+    }
+    if (!site || previewPosition !== 'bottom' || !hasMapInfo || !hadPanelRef.current) return;
+    hadPanelRef.current = false;
+    openNextMinimised(windowId);
+    openMapInfo();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- when the sheet closes
+  }, [site, previewPosition, hasMapInfo, previewId]);
 
   if (!site) return <TargetComponent {...targetProps} />;
 

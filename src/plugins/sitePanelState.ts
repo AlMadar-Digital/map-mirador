@@ -46,6 +46,17 @@ export const setSheetSnap = (windowId: string, snap: SheetSnap) => {
   listeners.forEach((listener) => listener());
 };
 
+// Windows whose next panel opens minimised (a phone's "Discover the map", back after a close).
+const openMinimised = new Set<string>();
+
+/** Opens the window's next panel minimised rather than at its open height. */
+export const openNextMinimised = (windowId: string) => {
+  openMinimised.add(windowId);
+};
+
+/** True, once, when the window's panel was asked to open minimised. */
+export const consumeOpenMinimised = (windowId: string): boolean => openMinimised.delete(windowId);
+
 /** Back to the default height, for a panel opened afresh. */
 export const resetSheet = (windowId: string) => {
   fullByWindow.delete(windowId);

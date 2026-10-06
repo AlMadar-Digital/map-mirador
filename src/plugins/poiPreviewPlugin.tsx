@@ -48,6 +48,7 @@ import { MAP_INFO_ID, NESTED_ORIGIN_ID, POI_PREVIEW_CONTENT_ID } from './preview
 
 export { MAP_INFO_ID, NESTED_ORIGIN_ID, POI_PREVIEW_CONTENT_ID };
 import {
+  consumeOpenMinimised,
   consumePanelFocus,
   isInsideMap,
   resetSheet,
@@ -616,8 +617,9 @@ const SitePanel = ({
   const collapsed = usePanelCollapsed(windowId);
   const snap = useSheetSnap(windowId);
   const isSheet = position === 'bottom';
+  // A panel opening on something new shows it - unless it was asked to open minimised.
   useEffect(() => {
-    setPanelCollapsed(windowId, false);
+    setPanelCollapsed(windowId, consumeOpenMinimised(windowId));
   }, [showing, windowId]);
 
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -1475,6 +1477,8 @@ const AnnotationsOverlayPoiClickWrapper = ({
         selectAnnotationAndMaybePreview(targetProps.windowId, annotationId);
         return;
       }
+      // Pressing a pin shows its panel, even one that's selected already but slid away.
+      setPanelCollapsed(targetProps.windowId, false);
       // Pressing the selected pin of a POI with a nested map opens it again (after Back).
       const item = annotationId === targetProps.selectedAnnotationId
         ? annotationPagesItems(annotationPages).find((candidate) => candidate.id === annotationId)

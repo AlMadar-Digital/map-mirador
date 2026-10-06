@@ -116,6 +116,15 @@ describe('AudioPlayer', () => {
     );
   });
 
+  it('stops when it is taken off the page', () => {
+    const { unmount } = renderPlayer();
+    fireEvent.click(screen.getByRole('button', { exact: true, name: 'Play' }));
+    const pause = vi.mocked(window.HTMLMediaElement.prototype.pause);
+    pause.mockClear();
+    unmount();
+    expect(pause).toHaveBeenCalledTimes(1);
+  });
+
   it('plays one recording at a time', () => {
     render(
       <>

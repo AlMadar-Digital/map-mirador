@@ -35,6 +35,25 @@ describe('MapViewer', () => {
     expect(viewer).toHaveBeenCalledWith(expect.objectContaining({ language: 'en' }), expect.anything());
   });
 
+  it("runs the site preset by default, and Mirador's own map UI without it", () => {
+    const { unmount } = render(<MapViewer manifestId="https://example.com/manifest.json" />);
+    expect(viewer).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        maps: expect.objectContaining({ site: true }),
+        styles: { prepend: true },
+        window: expect.objectContaining({ defaultSidebarPanelHeight: 310, defaultSidebarPanelWidth: 480 }),
+      }),
+      expect.anything(),
+    );
+    unmount();
+
+    render(<MapViewer manifestId="https://example.com/manifest.json" site={false} />);
+    const [config] = viewer.mock.lastCall;
+    expect(config.maps.site).toBe(false);
+    expect(config.styles).toBeUndefined();
+    expect(config.window).not.toHaveProperty('defaultSidebarPanelWidth');
+  });
+
   it('starts Mirador in the given language', () => {
     const { container } = render(<MapViewer lang="ar" manifestId="https://example.com/manifest.json" />);
 

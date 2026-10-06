@@ -41,3 +41,71 @@ describe('fillViewBounds', () => {
     expect(view.width / 390).toBeCloseTo(Math.max(1800 / 390, 1295 / 844));
   });
 });
+
+describe('useFillView', () => {
+  // A stand-in for the OpenSeadragon viewer: one image, a viewport that remembers its view.
+  const fakeViewer = () => {
+    const handlers = {};
+    const view = { center: { x: 0, y: 0 }, zoom: 1 };
+    const item = { getBounds: () => image };
+    return {
+      addOnceHandler: (name, handler) => {
+        handlers[name] = handler;
+      },
+      handlers,
+      removeHandler: vi.fn(),
+      view,
+      viewport: {
+        fitBounds: vi.fn((rect) => {
+          view.center = { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+          view.zoom = 1 / rect.width;
+        }),
+        getCenter: () => view.center,
+        getContainerSize: () => ({ x: 1440, y: 900 }),
+        getZoom: () => view.zoom,
+      },
+      world: { addHandler: vi.fn(), getItemAt: () => item, removeHandler: vi.fn() },
+    };
+  };
+
+  beforeEach(() => {
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      callback(0);
+      return 1;
+    });
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it('takes in POIs that arrive after the first fit, unless the visitor has moved the map', async () => {
+    const { renderHook } = await import('@testing-library/react');
+    const { useFillView } = await import('../../../src/plugins/fillView.ts');
+    const viewer = fakeViewer();
+    const props = { enabled: true, points: [], viewer, windowId: 'fill-1' };
+    const { rerender } = renderHook((p) => useFillView(p), { initialProps: props });
+
+    viewer.handlers['tile-loaded']();
+    expect(viewer.viewport.fitBounds).toHaveBeenCalledTimes(1);
+
+    // The annotations load afterwards: the view takes the new POIs in.
+    rerender({
+      ...props,
+      points: [
+        { x: 60, y: 60 },
+        { x: 1750, y: 1250 },
+      ],
+    });
+    expect(viewer.viewport.fitBounds).toHaveBeenCalledTimes(2);
+
+    // Once the visitor has moved the map, later POIs leave it where it is.
+    viewer.view.center = { x: 100, y: 100 };
+    rerender({
+      ...props,
+      points: [
+        { x: 60, y: 60 },
+        { x: 1750, y: 1250 },
+        { x: 900, y: 10 },
+      ],
+    });
+    expect(viewer.viewport.fitBounds).toHaveBeenCalledTimes(2);
+  });
+});

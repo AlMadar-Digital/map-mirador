@@ -19,6 +19,7 @@ import {
   getConfig,
   getSelectedAnnotationId,
   getVisibleCanvases,
+  removeCompanionWindow,
   selectAnnotation,
   updateCompanionWindow,
   // Relative, not `from 'dbf-mirador'`: this file lives inside the dbf-mirador package
@@ -31,11 +32,10 @@ import { getLinkedMapManifestId, openNestedMap, type LinkedMap } from './nestedM
 // A "dumb" way to preview a POI/journey (issue #375): a Mirador companion window plugin,
 // registered alongside dbf-mirador-annotation-editor's own (see MiradorMaeViewer.tsx) via
 // Mirador's `companionWindowKey` mechanism - no core patch needed, just adding this plugin
-// to the same `plugins` array. The actual "Preview" button lives per-row in
-// dbf-mirador-annotation-editor's own CanvasListItem.jsx, right next to Edit/Delete
-// (see that package's own PR for issue #375) - it opens this companion window passing the
-// specific row's id as `annotationid`, the same convention MAE's own 'annotationCreation'
-// companion window already uses for its own Edit button.
+// to the same `plugins` array. Selecting a row of dbf-mirador-annotation-editor's annotation
+// list opens it (issue #457, replacing that list's former per-row Preview button, issue #375),
+// passing the row's id as `annotationid` - the same convention MAE's own 'annotationCreation'
+// companion window uses - as does clicking a pin on the map (poiPreviewClickPlugin below).
 //
 // Journeys (issue #378) get a richer path here: a Journey renders its ordered stops as
 // numbered cards, closer to how the public site will eventually present it. Two
@@ -47,6 +47,42 @@ const POI_PREVIEW_CONTENT_ID = 'mapsPoiPreview';
 // dbf-mirador-annotation-editor's own edit companion window (its annotationCreation plugin),
 // opened by the Edit button below exactly the way that package's annotation list opens it.
 const ANNOTATION_EDIT_CONTENT_ID = 'annotationCreation';
+
+type CompanionWindowEntry = {
+  annotationid?: string;
+  content: string | null;
+  id: string;
+  position?: string;
+  windowId: string;
+};
+
+// Issue #457: Edit replaces this preview (and any other companion window beside the map - the
+// left-hand sidebar stays) with dbf-mirador-annotation-editor's form, telling the form which
+// preview to bring back once the annotation is saved (its `returnToPreview`, the same contract
+// as that package's own annotationPreview.js).
+export const editInPlaceOfPreview =
+  (windowId: string, previewCompanionWindowId: string, annotationId: string) =>
+  (dispatch: (action: unknown) => void, getState: () => unknown) => {
+    const companionWindows = Object.values(
+      getCompanionWindows(getState()) as Record<string, CompanionWindowEntry>
+    ).filter((cw) => cw.windowId === windowId);
+    const preview = companionWindows.find((cw) => cw.id === previewCompanionWindowId);
+
+    companionWindows
+      .filter((cw) => cw.position !== 'left')
+      .forEach((cw) => dispatch(removeCompanionWindow(windowId, cw.id)));
+
+    dispatch(
+      addCompanionWindow(windowId, {
+        annotationid: annotationId,
+        content: ANNOTATION_EDIT_CONTENT_ID,
+        position: 'right',
+        ...(preview?.annotationid
+          ? { returnToPreview: { annotationid: preview.annotationid, position: preview.position } }
+          : {}),
+      })
+    );
+  };
 
 type TextualAnnotationBody = {
   purpose: 'identifying' | 'describing';
@@ -635,9 +671,9 @@ const PoiPreviewContent = ({
 };
 
 interface PreviewContentProps {
-  addCompanionWindow?: typeof addCompanionWindow;
   annotation: RawAnnotation | null;
   canEdit?: boolean;
+  editInPlaceOfPreview?: (windowId: string, previewCompanionWindowId: string, annotationId: string) => void;
   hasAnnotationEditor?: boolean;
   id: string;
   isEditing?: boolean;
@@ -651,9 +687,9 @@ interface PreviewContentProps {
 }
 
 const PreviewContent = ({
-  addCompanionWindow: dispatchAddCompanionWindow,
   annotation,
   canEdit = false,
+  editInPlaceOfPreview: dispatchEdit,
   hasAnnotationEditor = false,
   id,
   isEditing = false,
@@ -676,14 +712,7 @@ const PreviewContent = ({
       contentLocale={contentLocale}
       isEditing={isEditing}
       onContentLocaleChange={setContentLocale}
-      onEdit={() =>
-        annotation &&
-        dispatchAddCompanionWindow?.(windowId, {
-          annotationid: annotation.id,
-          content: ANNOTATION_EDIT_CONTENT_ID,
-          position: 'right',
-        })
-      }
+      onEdit={() => annotation && dispatchEdit?.(windowId, id, annotation.id)}
       uiLocale={locale}
     />
   );
@@ -745,7 +774,7 @@ const poiPreviewCompanionWindowPlugin = {
       selectedAnnotationId: getSelectedAnnotationId(state, { windowId }) as string | undefined,
     };
   },
-  mapDispatchToProps: { addCompanionWindow, openNestedMap, selectAnnotation },
+  mapDispatchToProps: { editInPlaceOfPreview, openNestedMap, selectAnnotation },
 };
 
 type AnnotationPages = Record<string, { json?: { items?: unknown[] } }>;

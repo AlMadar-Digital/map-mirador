@@ -65,7 +65,7 @@ const USER_SCROLL_EVENTS = ['wheel', 'touchstart', 'pointerdown', 'keydown'];
 
 interface UseScrollSelectOptions {
   enabled: boolean;
-  // Re-reads the layout when it changes (the panel moving between the side and the sheet).
+  // Re-attaches when the panel moves between the side and the sheet (a different scroller).
   layout: string;
   // The list of cards, each carrying its POI's id as `data-poi-id`.
   listRef: RefObject<HTMLElement | null>;
@@ -103,9 +103,10 @@ export const useScrollSelect = ({
   useEffect(() => {
     const list = listRef.current;
     if (!enabled || !list) return undefined;
-    const row = isRowLayout(list);
-    const scroller = row ? list : getColumnScroller(list);
-    if (!scroller) return undefined;
+    // Both scrollers are watched, and which one counts is read when a scroll settles: the host's
+    // CSS decides between row and column, and can switch at its own breakpoint or on rotation.
+    const columnScroller = getColumnScroller(list);
+    const scrollers = [list, ...(columnScroller && columnScroller !== list ? [columnScroller] : [])];
 
     let timer: ReturnType<typeof setTimeout> | undefined;
     const markVisitor = () => {
@@ -113,6 +114,9 @@ export const useScrollSelect = ({
     };
     const settle = () => {
       if (!visitorScrolling.current) return;
+      const row = isRowLayout(list);
+      const scroller = row ? list : columnScroller;
+      if (!scroller) return;
       const cards = Array.from(list.children).filter(
         (child): child is HTMLElement => child instanceof HTMLElement && !!child.dataset.poiId
       );
@@ -126,12 +130,16 @@ export const useScrollSelect = ({
       timer = setTimeout(settle, SCROLL_SETTLE_MS);
     };
 
-    USER_SCROLL_EVENTS.forEach((name) => scroller.addEventListener(name, markVisitor, { passive: true }));
-    scroller.addEventListener('scroll', onScroll, { passive: true });
+    scrollers.forEach((scroller) => {
+      USER_SCROLL_EVENTS.forEach((name) => scroller.addEventListener(name, markVisitor, { passive: true }));
+      scroller.addEventListener('scroll', onScroll, { passive: true });
+    });
     return () => {
       clearTimeout(timer);
-      USER_SCROLL_EVENTS.forEach((name) => scroller.removeEventListener(name, markVisitor));
-      scroller.removeEventListener('scroll', onScroll);
+      scrollers.forEach((scroller) => {
+        USER_SCROLL_EVENTS.forEach((name) => scroller.removeEventListener(name, markVisitor));
+        scroller.removeEventListener('scroll', onScroll);
+      });
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `getColumnScroller` is a module-level function
   }, [enabled, layout, listRef]);

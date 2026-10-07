@@ -295,16 +295,11 @@ describe('poiPreviewPlugin site preset', () => {
         />,
       );
 
-    it('opens a POI\'s nested map as soon as it is shown, with no "Open map" button', () => {
+    it('leaves a POI\'s nested map to its pin: showing the POI opens nothing, and there is no "Open map" button', () => {
       const openNestedMap = vi.fn();
       renderSite({ annotation: nestedPoi, linkedMapManifestId: 'https://example.org/nested', openNestedMap });
 
-      expect(openNestedMap).toHaveBeenCalledWith('window', 'https://example.org/nested', {
-        annotation: nestedPoi,
-        position: 'right',
-        previewAnnotationId: 'n',
-        selectedAnnotationId: 'n',
-      });
+      expect(openNestedMap).not.toHaveBeenCalled();
       expect(screen.queryByRole('button', { name: 'Open map' })).not.toBeInTheDocument();
     });
 
@@ -316,22 +311,28 @@ describe('poiPreviewPlugin site preset', () => {
       expect(openNestedMap).not.toHaveBeenCalled();
     });
 
-    it("opens a journey stop's nested map when the stop is selected", () => {
+    it("opens a journey stop's nested map when its card is pressed, not when the stop is selected", async () => {
       const openNestedMap = vi.fn();
-      const stops = [stop('a', 'The Start', 1), stop('b', 'Manzil Qastal', 2)];
-      renderSite({
-        annotation: journey,
-        journeyPois: stops,
-        openNestedMap,
+      const selectAnnotation = vi.fn();
+      const linkedMap = { id: 'nested-doc', manifestId: 'https://example.org/nested' };
+      const stops = [stop('a', 'The Start', 1), { ...stop('b', 'Manzil Qastal', 2), 'dbf:linkedMap': linkedMap }];
+      renderSite({ annotation: journey, journeyPois: stops, openNestedMap, selectAnnotation, selectedAnnotationId: 'b' });
+
+      // Selected (by a scroll, a swipe or the tour): nothing opens.
+      expect(openNestedMap).not.toHaveBeenCalled();
+
+      await userEvent.click(screen.getByRole('button', { name: 'Manzil Qastal' }));
+      expect(openNestedMap).toHaveBeenCalledWith('window', 'https://example.org/nested', {
+        annotation: stops[1],
+        position: 'right',
+        previewAnnotationId: 'journey',
         selectedAnnotationId: 'b',
-        selectedStopLinkedMapManifestId: 'https://example.org/nested',
       });
 
-      expect(openNestedMap).toHaveBeenCalledWith(
-        'window',
-        'https://example.org/nested',
-        expect.objectContaining({ annotation: stops[1], previewAnnotationId: 'journey', selectedAnnotationId: 'b' }),
-      );
+      // A stop without a nested map is just selected.
+      await userEvent.click(screen.getByRole('button', { name: 'The Start' }));
+      expect(selectAnnotation).toHaveBeenCalledWith('window', 'a');
+      expect(openNestedMap).toHaveBeenCalledTimes(1);
     });
 
     it('shows nothing, not "not found", while the map is still loading', () => {

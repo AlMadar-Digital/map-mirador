@@ -66,13 +66,23 @@ type GetState = () => unknown;
  * The URL of a linked map's manifest: the one the annotation carries, else the one the host's
  * resolver gives, else null.
  */
-export const getLinkedMapManifestId = (state: unknown, linkedMap?: LinkedMap | null): string | null => {
+export const resolveLinkedMapManifestId = (
+  linkedMap?: LinkedMap | null,
+  resolve?: LinkedMapManifestResolver | null
+): string | null => {
   if (!linkedMap?.id) return null;
   if (linkedMap.manifestId) return linkedMap.manifestId;
-  const resolve = (getConfig(state) as { maps?: { getLinkedMapManifestId?: LinkedMapManifestResolver } }).maps
-    ?.getLinkedMapManifestId;
   return resolve?.(linkedMap) || null;
 };
+
+/** The host's resolver for linked maps without a manifest URL (`maps.getLinkedMapManifestId`). */
+export const getLinkedMapResolver = (state: unknown): LinkedMapManifestResolver | null =>
+  (getConfig(state) as { maps?: { getLinkedMapManifestId?: LinkedMapManifestResolver } }).maps
+    ?.getLinkedMapManifestId ?? null;
+
+/** As resolveLinkedMapManifestId, with the host's resolver from the store. */
+export const getLinkedMapManifestId = (state: unknown, linkedMap?: LinkedMap | null): string | null =>
+  resolveLinkedMapManifestId(linkedMap, getLinkedMapResolver(state));
 
 const getMapHistory = (state: unknown, windowId: string): MapHistoryEntry[] =>
   (getWindow(state, { windowId }) as MiradorWindow | undefined)?.mapHistory ?? [];
@@ -80,22 +90,6 @@ const getMapHistory = (state: unknown, windowId: string): MapHistoryEntry[] =>
 /** Where the window's current nested map was opened from, if it was opened from a POI. */
 export const getNestedOrigin = (state: unknown, windowId: string): NestedOrigin | null =>
   getMapHistory(state, windowId).at(-1)?.origin ?? null;
-
-// The POI whose selection Back restores must not open its nested map again straight away; nor
-// does a journey stop scrolled to in the panel (scrollSelect.ts) - clicking it then does.
-const skipNestedOpen = new Map<string, string>();
-
-/** Keeps the next selection of `annotationId` from opening its nested map. */
-export const skipNextNestedOpen = (windowId: string, annotationId: string) => {
-  skipNestedOpen.set(windowId, annotationId);
-};
-
-/** True, once, for the POI whose selection Back has just restored. */
-export const consumeSkipNestedOpen = (windowId: string, annotationId: string): boolean => {
-  if (skipNestedOpen.get(windowId) !== annotationId) return false;
-  skipNestedOpen.delete(windowId);
-  return true;
-};
 
 // The viewport Back returns to. Mirador fits a newly shown map to the view once its first tile
 // loads (OpenSeadragonComponent), so this is applied right after that.
@@ -210,7 +204,6 @@ export const backToParentMap = (windowId: string) => (dispatch: Dispatch, getSta
   if (!origin) return;
   if (origin.viewer) pendingViewport.set(windowId, origin.viewer as { x?: number; y?: number; zoom?: number });
   if (origin.selectedAnnotationId) {
-    skipNestedOpen.set(windowId, origin.selectedAnnotationId);
     dispatch(selectAnnotation(windowId, origin.selectedAnnotationId));
     requestPinFocus(windowId, origin.selectedAnnotationId);
   }

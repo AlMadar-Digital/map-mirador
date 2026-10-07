@@ -76,6 +76,19 @@ describe('useFillView', () => {
   });
   afterEach(() => vi.restoreAllMocks());
 
+  it('fills straight away when the image has finished loading before it mounts', async () => {
+    const { renderHook } = await import('@testing-library/react');
+    const { useFillView } = await import('../../../src/plugins/fillView.ts');
+    const viewer = fakeViewer();
+    const item = { getBounds: () => image, getFullyLoaded: () => true };
+    viewer.world.getItemAt = () => item;
+
+    renderHook(() => useFillView({ enabled: true, points: [], viewer, windowId: 'fill-loaded' }));
+
+    expect(viewer.viewport.fitBounds).toHaveBeenCalledTimes(1);
+    expect(viewer.handlers['tile-loaded']).toBeUndefined();
+  });
+
   it('takes in POIs that arrive after the first fit, unless the visitor has moved the map', async () => {
     const { renderHook } = await import('@testing-library/react');
     const { useFillView } = await import('../../../src/plugins/fillView.ts');

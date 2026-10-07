@@ -1,5 +1,11 @@
 import { useEffect, useRef, useSyncExternalStore } from 'react';
 
+/** The panel's collapse tab, shared by the panel and the map tools that both show it. */
+export const PANEL_LABELS = {
+  ar: { collapse: 'إخفاء اللوحة', expand: 'إظهار اللوحة' },
+  en: { collapse: 'Hide panel', expand: 'Show panel' },
+};
+
 // Whether the site preset's preview panel is collapsed (slid away behind its tab) per window.
 // Shared by the panel and the map tools, which render in different parts of Mirador's tree; it
 // is view state only, so it lives here rather than in the Redux store.

@@ -199,6 +199,9 @@ export default class CanvasAnnotationDisplay {
 
     if (currentPalette.globalAlpha === 0) return;
 
+    // The host's line style is for journeys only; other shapes keep their authored style.
+    const lineStyle = this.resource.isJourney ? this.lineStyle : null;
+
     [...this.svgPaths].forEach((element) => {
       /**
        *  Note: Path2D is not supported in IE11.
@@ -207,7 +210,9 @@ export default class CanvasAnnotationDisplay {
        */
       this.context.save();
       this.context.translate(this.offset.x, this.offset.y);
-      const points = this.lineStyle?.curve ? straightSegmentPoints(element) : null;
+      // Only an open line is curved: a polygon would lose its closing edge.
+      const curve = lineStyle?.curve && element.tagName.toLowerCase() !== 'polygon';
+      const points = curve ? straightSegmentPoints(element) : null;
       const p = points ? smoothPath(points) : buildPath2D(element);
 
       // Setup styling from SVG -> Canvas
@@ -238,8 +243,9 @@ export default class CanvasAnnotationDisplay {
         this.context.strokeStyle = currentPalette.strokeStyle || currentPalette.fillStyle;
       }
 
-      if (this.lineStyle) {
-        const { lineDash, lineWidth, strokeStyle } = this.lineStyle;
+      // The journey line looks the same in every state (TL-10: no recolour on hover or select).
+      if (lineStyle) {
+        const { lineDash, lineWidth, strokeStyle } = lineStyle;
         if (strokeStyle) this.context.strokeStyle = strokeStyle;
         if (lineWidth) this.context.lineWidth = lineWidth / this.zoomRatio;
         if (lineDash) this.context.setLineDash(lineDash.map((length) => length / this.zoomRatio));

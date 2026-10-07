@@ -23,7 +23,7 @@ import {
   usePreviewPosition,
   type ContentLocale,
 } from './poiPreviewPlugin';
-import { openNextMinimised, setPanelCollapsed, usePanelCollapsed } from './sitePanelState';
+import { openNextMinimised, PANEL_LABELS, setPanelCollapsed, usePanelCollapsed } from './sitePanelState';
 import { pinLabel } from './sitePins';
 
 // Read by screen readers only (the usual visually-hidden recipe).
@@ -47,15 +47,13 @@ const VISUALLY_HIDDEN = {
 
 const LABELS: Record<ContentLocale, Record<string, string>> = {
   ar: {
-    collapse: 'إخفاء اللوحة',
-    expand: 'إظهار اللوحة',
+    ...PANEL_LABELS.ar,
     rights: 'حقوق الصورة',
     zoomIn: 'تكبير',
     zoomOut: 'تصغير',
   },
   en: {
-    collapse: 'Hide panel',
-    expand: 'Show panel',
+    ...PANEL_LABELS.en,
     rights: 'Image rights',
     zoomIn: 'Zoom in',
     zoomOut: 'Zoom out',

@@ -35,8 +35,8 @@ describe('MapViewer', () => {
     expect(viewer).toHaveBeenCalledWith(expect.objectContaining({ language: 'en' }), expect.anything());
   });
 
-  it("runs the site preset by default, and Mirador's own map UI without it", () => {
-    const { unmount } = render(<MapViewer manifestId="https://example.com/manifest.json" />);
+  it("runs Mirador's own map UI by default, and the site preset when asked", () => {
+    const { unmount } = render(<MapViewer manifestId="https://example.com/manifest.json" site />);
     expect(viewer).toHaveBeenLastCalledWith(
       expect.objectContaining({
         maps: expect.objectContaining({ site: true }),
@@ -47,7 +47,7 @@ describe('MapViewer', () => {
     );
     unmount();
 
-    render(<MapViewer manifestId="https://example.com/manifest.json" site={false} />);
+    render(<MapViewer manifestId="https://example.com/manifest.json" />);
     const [config] = viewer.mock.lastCall;
     expect(config.maps.site).toBe(false);
     expect(config.styles).toBeUndefined();

@@ -25,6 +25,33 @@ const labels = new Map([
   ['c', 'Mount'],
 ]);
 
+describe('requestPinFocus', () => {
+  afterEach(() => vi.useRealTimers());
+
+  /** Pins for a window, on the page (so they can take focus), after waiting `ms` */
+  const pinsAfter = (windowId, ms) => {
+    vi.useFakeTimers();
+    requestPinFocus(windowId, 'c');
+    vi.advanceTimersByTime(ms);
+    const viewer = fakeViewer();
+    viewer.addOverlay.mockImplementation(({ element }) => {
+      viewer.overlays.push(element);
+      document.body.append(element);
+    });
+    renderHook(() => useSitePins({ enabled: true, labels, onSelect: vi.fn(), resources, viewer, windowId }));
+
+    return viewer.overlays.map((overlay) => overlay.querySelector('button'));
+  };
+
+  it('focuses a pin that appears soon after it was asked for', () => {
+    expect(pinsAfter('soon', 1000)[2]).toHaveFocus();
+  });
+
+  it('forgets a pin that takes too long, rather than taking focus while the visitor is elsewhere', () => {
+    expect(pinsAfter('late', 6000)[2]).not.toHaveFocus();
+  });
+});
+
 describe('readLineStyle', () => {
   it("leaves the authored line alone when the host sets none of it, and reads the host's dash", () => {
     const element = document.body.appendChild(document.createElement('div'));

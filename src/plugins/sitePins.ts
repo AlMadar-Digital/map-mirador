@@ -53,16 +53,31 @@ type Pin = { anchor: HTMLElement; button: HTMLButtonElement };
 const pinsByWindow = new Map<string, Map<string, Pin>>();
 
 // A pin to focus once it exists: Back returns focus to the POI the nested map was opened from.
-const pendingPinFocus = new Map<string, string>();
+// The request expires, so a pin that never comes back doesn't take focus much later (the next
+// time a pin with that id appears, say), while the visitor is elsewhere.
+const PIN_FOCUS_TIMEOUT_MS = 5000;
+const pendingPinFocus = new Map<string, { annotationId: string; until: number }>();
 
-/** Focuses a POI's pin: now if it is on the map, else as soon as it is. */
+/** Focuses a POI's pin: now if it is on the map, else as soon as it is (within a few seconds). */
 export const requestPinFocus = (windowId: string, annotationId: string) => {
   const pin = pinsByWindow.get(windowId)?.get(annotationId);
   if (pin && pin.button.isConnected) {
+    pendingPinFocus.delete(windowId);
     pin.button.focus({ preventScroll: true });
     return;
   }
-  pendingPinFocus.set(windowId, annotationId);
+  pendingPinFocus.set(windowId, { annotationId, until: Date.now() + PIN_FOCUS_TIMEOUT_MS });
+};
+
+/** The pin a window still waits to focus, forgetting a request that has expired. */
+const takePendingPinFocus = (windowId: string): string | undefined => {
+  const pending = pendingPinFocus.get(windowId);
+  if (!pending) return undefined;
+  if (Date.now() > pending.until) {
+    pendingPinFocus.delete(windowId);
+    return undefined;
+  }
+  return pending.annotationId;
 };
 
 /** A pin's accessible name: its title, and its place in the journey when it is a stop. */
@@ -230,7 +245,7 @@ export const useSitePins = ({
       button.tabIndex = id === tabStop ? 0 : -1;
     });
 
-    const focusId = windowId ? pendingPinFocus.get(windowId) : undefined;
+    const focusId = windowId ? takePendingPinFocus(windowId) : undefined;
     const focusPin = focusId ? pins.get(focusId) : undefined;
     if (windowId && focusPin) {
       pendingPinFocus.delete(windowId);

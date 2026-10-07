@@ -43,22 +43,22 @@ import {
   // resolve against during local dev.
 } from '../index';
 import {
-  consumeSkipNestedOpen,
   getLinkedMapManifestId,
+  getLinkedMapResolver,
   getNestedOrigin,
   openNestedMap,
-  skipNextNestedOpen,
+  resolveLinkedMapManifestId,
   useRestoreParentViewport,
   type LinkedMap,
+  type LinkedMapManifestResolver,
   type NestedOrigin,
 } from './nestedMapPlugin';
 import { MAP_INFO_ID, NESTED_ORIGIN_ID, POI_PREVIEW_CONTENT_ID } from './previewIds';
-
-export { MAP_INFO_ID, NESTED_ORIGIN_ID, POI_PREVIEW_CONTENT_ID };
 import {
   consumeOpenMinimised,
   consumePanelFocus,
   isInsideMap,
+  PANEL_LABELS,
   resetSheet,
   setPanelCollapsed,
   setSheetSnap,
@@ -73,8 +73,9 @@ import { isRowLayout, useScrollSelect } from './scrollSelect';
 import { AudioPlayer, audioUrl } from './audioPlayer';
 import { getTourPois } from './tourOrder';
 import { useFillView } from './fillView';
-import { requestPinFocus } from './sitePins';
-import { readLineStyle, useSitePins, type PinResource } from './sitePins';
+import { readLineStyle, requestPinFocus, useSitePins, type PinResource } from './sitePins';
+
+export { MAP_INFO_ID, NESTED_ORIGIN_ID, POI_PREVIEW_CONTENT_ID };
 
 // A "dumb" way to preview a POI/journey (issue #375): a Mirador companion window plugin,
 // registered alongside dbf-mirador-annotation-editor's own (see MiradorMaeViewer.tsx) via
@@ -195,8 +196,7 @@ const LABELS: Record<ContentLocale, Record<string, string>> = {
     notFound: 'تعذر العثور على هذا العنصر - ربما تم حذفه.',
     openMap: 'فتح الخريطة',
     closePanel: 'إغلاق اللوحة',
-    collapse: 'إخفاء اللوحة',
-    expand: 'إظهار اللوحة',
+    ...PANEL_LABELS.ar,
     expandSheet: 'توسيع اللوحة',
     shrinkSheet: 'تصغير اللوحة',
     discover: 'اكتشف الخريطة',
@@ -226,8 +226,7 @@ const LABELS: Record<ContentLocale, Record<string, string>> = {
     notFound: 'This annotation could not be found - it may have been deleted.',
     openMap: 'Open map',
     closePanel: 'Close panel',
-    collapse: 'Hide panel',
-    expand: 'Show panel',
+    ...PANEL_LABELS.en,
     expandSheet: 'Expand panel',
     shrinkSheet: 'Shrink panel',
     discover: 'Discover the map',
@@ -286,9 +285,6 @@ export const eyebrowFor = (annotation: RawAnnotation, locale: ContentLocale): st
 
 const IMAGE_FILE = /\.(avif|gif|jpe?g|png|svg|webp)$/i;
 
-// The image to show for a POI's media, if it has one. A Media Library upload's
-// `thumbnailUrl` is the uploaded file itself, which may be audio, video or a PDF - only an
-// image file is shown as one. IIIF Images and Media Items always carry an image thumbnail.
 // A site card's media (`.dbf-map-poi__media`): the audio player for a recording, else its image.
 // A recording is titled with its Media Item's title (English only on the wire), else the POI's.
 const SiteMedia = ({ locale, media, poiTitle }: { locale: ContentLocale; media?: DbfMedia | null; poiTitle: string }) => {
@@ -330,6 +326,9 @@ const SiteMedia = ({ locale, media, poiTitle }: { locale: ContentLocale; media?:
   );
 };
 
+// The image to show for a POI's media, if it has one. A Media Library upload's
+// `thumbnailUrl` is the uploaded file itself, which may be audio, video or a PDF - only an
+// image file is shown as one. IIIF Images and Media Items always carry an image thumbnail.
 export const mediaImageUrl = (media: DbfMedia | null | undefined): string | null => {
   const url = media?.thumbnailUrl;
   if (!url) return null;
@@ -903,6 +902,17 @@ const JourneyLink = ({ journeyTitle, onClick, uiLocale }: JourneyLinkProps) => {
   );
 };
 
+/**
+ * Where a nested map opened from a POI comes from: the POI the panel keeps showing, and what
+ * Back restores - the preview (its journey's, for a stop) with the POI selected.
+ */
+const nestedOriginFor = (annotation: RawAnnotation, previewAnnotationId: string, position: PanelPosition): NestedOrigin => ({
+  annotation,
+  position,
+  previewAnnotationId,
+  selectedAnnotationId: annotation.id,
+});
+
 interface JourneyPreviewContentProps {
   editorToolbar: ReactNode;
   id: string;
@@ -917,7 +927,8 @@ interface JourneyPreviewContentProps {
   renderStopActions?: (poi: RawAnnotation) => ReactNode;
   selectAnnotation: typeof selectAnnotation;
   selectedAnnotationId?: string;
-  selectedStopLinkedMapManifestId?: string | null;
+  // The host's resolver for linked maps without a manifest URL.
+  linkedMapResolver?: LinkedMapManifestResolver | null;
   windowId: string;
 }
 
@@ -933,7 +944,7 @@ const JourneyPreviewContent = ({
   renderStopActions,
   selectAnnotation: dispatchSelectAnnotation,
   selectedAnnotationId,
-  selectedStopLinkedMapManifestId = null,
+  linkedMapResolver = null,
   site = false,
   windowId,
 }: JourneyPreviewContentProps) => {
@@ -1001,38 +1012,23 @@ const JourneyPreviewContent = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- re-runs only when another stop is selected
   }, [selectedStop?.id, windowId]);
 
-  // Site preset: a stop with a nested map opens it when the stop is focused (T-11).
-  useEffect(() => {
-    if (!site || !selectedStop || !selectedStopLinkedMapManifestId || !dispatchOpenNestedMap) return;
-    if (consumeSkipNestedOpen(windowId, selectedStop.id)) return;
-    dispatchOpenNestedMap(windowId, selectedStopLinkedMapManifestId, {
-      annotation: selectedStop,
-      position,
-      previewAnnotationId: journey.id,
-      selectedAnnotationId: selectedStop.id,
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- once per selected stop and nested map
-  }, [selectedStop?.id, selectedStopLinkedMapManifestId, site, windowId]);
-
+  // Pressing a stop's card. In the site preset a stop with a nested map opens it (T-11), the
+  // panel carrying the stop; anything else selects and focuses the stop. Browsing - scrolling,
+  // swiping, the tour - only selects, so it never opens a nested map.
   const focusPoi = (poi: RawAnnotation) => {
+    const linkedMapManifestId = site ? resolveLinkedMapManifestId(poi['dbf:linkedMap'], linkedMapResolver) : null;
+    if (linkedMapManifestId && dispatchOpenNestedMap) {
+      dispatchOpenNestedMap(windowId, linkedMapManifestId, nestedOriginFor(poi, journey.id, position));
+      return;
+    }
     const point = getPoiPoint(poi);
     if (point) focusMapOnPoint(windowId, point);
     // Selecting it also highlights the pin on the map, like clicking the pin itself would.
     dispatchSelectAnnotation(windowId, poi.id);
-    // A stop already selected - scrolled to, or come back to with Back - opens its nested map
-    // when it's clicked.
-    if (site && poi.id === selectedAnnotationId && selectedStopLinkedMapManifestId && dispatchOpenNestedMap) {
-      dispatchOpenNestedMap(windowId, selectedStopLinkedMapManifestId, {
-        annotation: poi,
-        position,
-        previewAnnotationId: journey.id,
-        selectedAnnotationId: poi.id,
-      });
-    }
   };
 
   // Site preset: scrolling the list (swiping the carousel on a phone) selects the stop it comes
-  // to, and focuses the map on it like stepping the tour does. Browsing doesn't open a nested map.
+  // to, and focuses the map on it like stepping the tour does.
   useScrollSelect({
     enabled: site,
     getColumnScroller: getScrollContainer,
@@ -1042,7 +1038,6 @@ const JourneyPreviewContent = ({
       const poi = pois.find((item) => item.id === poiId);
       if (!poi) return;
       scrolledToRef.current = poiId;
-      if (poi['dbf:linkedMap']) skipNextNestedOpen(windowId, poiId);
       const point = getPoiPoint(poi);
       if (point) focusMapOnPoint(windowId, point);
       dispatchSelectAnnotation(windowId, poi.id);
@@ -1130,6 +1125,7 @@ const JourneyPreviewContent = ({
           const poiTitle = textBody(poi, locale, 'identifying');
           const description = sanitizeDescription(textBody(poi, locale, 'describing'));
           const media = mediaForLocale(poi, locale);
+          const image = mediaImageUrl(media);
           const isLast = index === pois.length - 1;
           const isSelected = poi.id === selectedAnnotationId;
           return (
@@ -1187,10 +1183,10 @@ const JourneyPreviewContent = ({
               </div>
               <div style={{ flex: 1, paddingBottom: isLast ? 0 : 24 }}>
                 <h3 style={{ margin: '0 0 8px' }}>{poiTitle || '—'}</h3>
-                {mediaImageUrl(media) && (
+                {image && (
                   <img
                     alt={media?.title ?? ''}
-                    src={mediaImageUrl(media) ?? undefined}
+                    src={image}
                     style={{ borderRadius: 8, marginBottom: 8, maxWidth: '100%' }}
                   />
                 )}
@@ -1250,6 +1246,7 @@ const PoiPreviewContent = ({
   const title = annotation ? textBody(annotation, locale, 'identifying') : '';
   const description = annotation ? sanitizeDescription(textBody(annotation, locale, 'describing')) : '';
   const media = annotation ? mediaForLocale(annotation, locale) : null;
+  const image = mediaImageUrl(media);
 
   // The preview panel floats over the map, so the pin it describes may now be behind it. A
   // carried POI's point is on the parent map, not this one.
@@ -1258,20 +1255,6 @@ const PoiPreviewContent = ({
     if (point) ensurePointVisible(windowId, point);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on the pin's position, `point` is a fresh object each render
   }, [annotation?.id, point?.x, point?.y, windowId]);
-
-  // Site preset: a POI with a nested map opens it as soon as it is focused (TL-12); the panel
-  // keeps showing the POI. Back restores this selection without reopening it.
-  useEffect(() => {
-    if (!site || carried || !annotation || !linkedMapManifestId) return;
-    if (consumeSkipNestedOpen(windowId, annotation.id)) return;
-    dispatchOpenNestedMap(windowId, linkedMapManifestId, {
-      annotation,
-      position,
-      previewAnnotationId: annotation.id,
-      selectedAnnotationId: annotation.id,
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- once per POI and nested map
-  }, [annotation?.id, carried, linkedMapManifestId, site, windowId]);
 
   if (site) {
     return (
@@ -1319,8 +1302,8 @@ const PoiPreviewContent = ({
           <div dangerouslySetInnerHTML={{ __html: description }} />
         )}
         {media &&
-          (mediaImageUrl(media) ? (
-            <img alt={media.title ?? ''} src={mediaImageUrl(media) ?? undefined} style={{ maxWidth: '100%' }} />
+          (image ? (
+            <img alt={media.title ?? ''} src={image} style={{ maxWidth: '100%' }} />
           ) : (
             <p>
               {media.title}
@@ -1395,7 +1378,7 @@ interface PreviewContentProps {
   editInPlaceOfPreview?: (windowId: string, previewCompanionWindowId: string, annotationId: string) => void;
   hasAnnotationEditor?: boolean;
   loading?: boolean;
-  selectedStopLinkedMapManifestId?: string | null;
+  linkedMapResolver?: LinkedMapManifestResolver | null;
   id: string;
   isEditing?: boolean;
   // A POI's own journey, when on this canvas.
@@ -1422,7 +1405,7 @@ const PreviewContent = ({
   editInPlaceOfPreview: dispatchEdit,
   hasAnnotationEditor = false,
   loading = false,
-  selectedStopLinkedMapManifestId = null,
+  linkedMapResolver = null,
   id,
   isEditing = false,
   journey = null,
@@ -1510,7 +1493,7 @@ const PreviewContent = ({
         renderStopActions={renderStopActions || undefined}
         selectAnnotation={dispatchSelectAnnotation}
         selectedAnnotationId={selectedAnnotationId}
-        selectedStopLinkedMapManifestId={selectedStopLinkedMapManifestId}
+        linkedMapResolver={linkedMapResolver}
         site={site}
         windowId={windowId}
       />
@@ -1560,7 +1543,6 @@ const poiPreviewCompanionWindowPlugin = {
     const journeyPois =
       annotation && annotation['dbf:kind'] === 'Journey' ? getOrderedJourneyPois(items, annotation.id) : [];
     const selectedAnnotationId = getSelectedAnnotationId(state, { windowId }) as string | undefined;
-    const selectedStop = journeyPois.find((poi) => poi.id === selectedAnnotationId);
     const canEditAnnotations = hasAnnotationEditor && config.annotation?.readonly !== true;
     const journeyId = annotation?.['dbf:kind'] === 'POI' ? annotation['dbf:journey']?.id : undefined;
     return {
@@ -1576,11 +1558,12 @@ const poiPreviewCompanionWindowPlugin = {
           .length > 0,
       journey: (journeyId && items.find((item) => item.id === journeyId && item['dbf:kind'] === 'Journey')) || null,
       journeyPois,
-      // Only a Nested Map point whose map the host can resolve opens it (an "Open map" button
-      // in the editor; on focus in the site preset). A carried POI's nested map is the one open.
+      // Only a Nested Map point whose map the host can resolve opens it (the editor's "Open map"
+      // button; in the site preset, pressing its pin). A carried POI's nested map is the one open.
       linkedMapManifestId: carried ? null : getLinkedMapManifestId(state, annotation?.['dbf:linkedMap']),
       loading: !carried && annotationId !== MAP_INFO_ID && items.length === 0,
-      selectedStopLinkedMapManifestId: getLinkedMapManifestId(state, selectedStop?.['dbf:linkedMap']),
+      // Stops resolve their own nested map when their card is pressed.
+      linkedMapResolver: getLinkedMapResolver(state),
       locale,
       mapInfo: annotationId === MAP_INFO_ID ? getMapInfo(state, windowId, locale) : null,
       position: companionWindow?.position === 'bottom' ? 'bottom' : 'right',
@@ -1682,13 +1665,37 @@ interface AnnotationsOverlayPoiClickWrapperProps {
   updateCompanionWindow: typeof updateCompanionWindow;
   annotationPages?: AnnotationPages;
   existingPreviewCompanionWindowId?: string;
-  linkedMapResolver?: ((linkedMap: LinkedMap) => string | null | undefined) | null;
+  linkedMapResolver?: LinkedMapManifestResolver | null;
   locale?: ContentLocale;
   openNestedMap?: OpenNestedMap;
   previewShowsMapInfo?: boolean;
   site?: boolean;
   updateViewport?: (windowId: string, viewport: Record<string, unknown>) => void;
 }
+
+/**
+ * The host page's journey line style (`--dbf-map-line*`, sitePins.ts readLineStyle), read when
+ * the viewer appears and again when it is resized - a breakpoint can change it - rather than
+ * with `getComputedStyle` on every render.
+ */
+const useHostLineStyle = (element?: Element | null) => {
+  const [lineStyle, setLineStyle] = useState<ReturnType<typeof readLineStyle>>(null);
+  useEffect(() => {
+    if (!element) {
+      setLineStyle(null);
+      return undefined;
+    }
+    const read = () => {
+      const next = readLineStyle(element);
+      setLineStyle((current) => (JSON.stringify(current) === JSON.stringify(next) ? current : next));
+    };
+    read();
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(read);
+    observer?.observe(element);
+    return () => observer?.disconnect();
+  }, [element]);
+  return lineStyle;
+};
 
 // Wraps AnnotationsOverlay (the component that owns the OSD canvas-click handler and the
 // select/deselect-annotation dispatch, see AnnotationsOverlay#toggleAnnotation) so that
@@ -1740,18 +1747,19 @@ const AnnotationsOverlayPoiClickWrapper = ({
   };
 
   // The site preset draws POIs as buttons over the map (sitePins.ts) rather than on the canvas,
-  // and the journey line in the host page's style.
+  // and the journey line in the host page's style. Worked out once per change of the map's
+  // annotations or the language, not on every store update this overlay re-renders for.
   const pinResources = site
     ? (annotations.flatMap((annotation) => annotation.resources ?? []).filter(
         (resource) => resource.pointSelector
       ) as unknown as PinResource[])
     : [];
-  const labels = new Map(
-    site
-      ? annotationPagesItems(annotationPages).map((item) => [item.id, textBody(item, locale, 'identifying')])
-      : []
+  const items = useMemo(() => (site ? annotationPagesItems(annotationPages) : []), [annotationPages, site]);
+  const labels = useMemo(
+    () => new Map(items.map((item) => [item.id, textBody(item, locale, 'identifying')])),
+    [items, locale]
   );
-  const tourOrder = site ? getTourPois(annotationPagesItems(annotationPages)).map((poi) => poi.id) : [];
+  const tourOrder = useMemo(() => getTourPois(items).map((poi) => poi.id), [items]);
   useSitePins({
     canvasWorld: targetProps.canvasWorld,
     enabled: site,
@@ -1759,29 +1767,19 @@ const AnnotationsOverlayPoiClickWrapper = ({
     locale,
     order: tourOrder,
     onSelect: (annotationId, { browsing } = {}) => {
-      // Arrowing along the pins only browses: a POI with a nested map doesn't open it.
+      // Arrowing along the pins only browses: it selects, so it never opens a nested map.
       if (browsing) {
-        const browsed = annotationPagesItems(annotationPages).find((candidate) => candidate.id === annotationId);
-        if (browsed?.['dbf:linkedMap']) skipNextNestedOpen(targetProps.windowId, annotationId);
         selectAnnotationAndMaybePreview(targetProps.windowId, annotationId);
         return;
       }
       // Pressing a pin shows its panel, even one that's selected already but slid away.
       setPanelCollapsed(targetProps.windowId, false);
-      // Pressing the selected pin of a POI with a nested map opens it again (after Back).
-      const item = annotationId === targetProps.selectedAnnotationId
-        ? annotationPagesItems(annotationPages).find((candidate) => candidate.id === annotationId)
-        : undefined;
-      const linkedMap = item?.['dbf:linkedMap'];
-      const manifestId = linkedMap ? linkedMap.manifestId || linkedMapResolver?.(linkedMap) : null;
+      // Pressing the pin of a POI with a nested map opens it (TL-12), the panel carrying the POI.
+      const item = items.find((candidate) => candidate.id === annotationId);
+      const manifestId = item ? resolveLinkedMapManifestId(item['dbf:linkedMap'], linkedMapResolver) : null;
       if (item && manifestId && dispatchOpenNestedMap) {
-        const items = annotationPagesItems(annotationPages);
-        dispatchOpenNestedMap(targetProps.windowId, manifestId, {
-          annotation: item,
-          position: previewPosition,
-          previewAnnotationId: getPreviewAnnotationId(item, (id) => items.some((candidate) => candidate.id === id)),
-          selectedAnnotationId: item.id,
-        });
+        const previewAnnotationId = getPreviewAnnotationId(item, (id) => items.some((candidate) => candidate.id === id));
+        dispatchOpenNestedMap(targetProps.windowId, manifestId, nestedOriginFor(item, previewAnnotationId, previewPosition));
         return;
       }
       selectAnnotationAndMaybePreview(targetProps.windowId, annotationId);
@@ -1819,8 +1817,7 @@ const AnnotationsOverlayPoiClickWrapper = ({
     viewer: targetProps.viewer as Parameters<typeof useFillView>[0]['viewer'],
     windowId: targetProps.windowId,
   });
-  const lineStyleKey = site ? JSON.stringify(readLineStyle(targetProps.viewer?.element)) : 'null';
-  const lineStyle = useMemo(() => JSON.parse(lineStyleKey), [lineStyleKey]);
+  const lineStyle = useHostLineStyle(site ? targetProps.viewer?.element : null);
 
   if (site) {
     const canvasAnnotations = annotations.map((annotation) => ({
@@ -1849,9 +1846,7 @@ const poiPreviewClickPlugin = {
     // re-render of the whole overlay) on every store update.
     annotationPages: getCanvasAnnotationPages(state, windowId),
     existingPreviewCompanionWindowId: getPreviewCompanionWindowId(state, windowId),
-    linkedMapResolver:
-      (getConfig(state) as { maps?: { getLinkedMapManifestId?: (linkedMap: LinkedMap) => string | null } }).maps
-        ?.getLinkedMapManifestId ?? null,
+    linkedMapResolver: getLinkedMapResolver(state),
     previewShowsMapInfo:
       (getCompanionWindow(state, { companionWindowId: getPreviewCompanionWindowId(state, windowId) }) as
         | { annotationid?: string }

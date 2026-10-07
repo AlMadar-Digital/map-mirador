@@ -5,7 +5,6 @@ import { addCompanionWindow, addWindow, receiveManifest, selectAnnotation, updat
 import { getCompanionWindows, getSelectedAnnotationId, getWindow } from '../../../src/state/selectors';
 import {
   backToParentMap,
-  consumeSkipNestedOpen,
   getLinkedMapManifestId,
   getNestedOrigin,
   nestedMapPlugins,
@@ -130,7 +129,7 @@ describe('nestedMapPlugin', () => {
       expect(previews(store)).toEqual([expect.objectContaining({ annotationid: NESTED_ORIGIN_ID, position: 'right' })]);
     });
 
-    it("returns to the parent's selection and preview on Back, without reopening the nested map", () => {
+    it("returns to the parent's selection and preview on Back", () => {
       const store = setupStore();
       store.dispatch(openNestedMap('w', NESTED, origin));
       store.dispatch(backToParentMap('w'));
@@ -139,8 +138,6 @@ describe('nestedMapPlugin', () => {
       expect(getSelectedAnnotationId(store.getState(), { windowId: 'w' })).toBe('frontispiece');
       expect(previews(store)).toEqual([expect.objectContaining({ annotationid: 'journey' })]);
       expect(getNestedOrigin(store.getState(), 'w')).toBeNull();
-      expect(consumeSkipNestedOpen('w', 'frontispiece')).toBe(true);
-      expect(consumeSkipNestedOpen('w', 'frontispiece')).toBe(false);
     });
   });
 

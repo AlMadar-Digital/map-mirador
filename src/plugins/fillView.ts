@@ -67,7 +67,7 @@ type Viewer = {
   };
   world: {
     addHandler: (name: string, handler: () => void) => void;
-    getItemAt: (index: number) => { getBounds: () => Rect } | undefined;
+    getItemAt: (index: number) => { getBounds: () => Rect; getFullyLoaded?: () => boolean } | undefined;
     removeHandler: (name: string, handler: () => void) => void;
   };
 };
@@ -118,8 +118,13 @@ export const useFillView = ({ enabled, points, storeViewport, viewer, windowId }
       if (!hasPendingParentViewport(windowId)) viewer.addOnceHandler('tile-loaded', fill);
     };
     viewer.world.addHandler('add-item', onAddItem);
-    // The map's image may be in already when this mounts.
-    if (viewer.world.getItemAt(0) && !hasPendingParentViewport(windowId)) viewer.addOnceHandler('tile-loaded', fill);
+    // The map's image may be in already when this mounts - all its tiles even, in which case no
+    // `tile-loaded` is coming, so it fills straight away.
+    const shown = viewer.world.getItemAt(0);
+    if (shown && !hasPendingParentViewport(windowId)) {
+      if (shown.getFullyLoaded?.()) fill();
+      else viewer.addOnceHandler('tile-loaded', fill);
+    }
     return () => {
       cancelAnimationFrame(frame);
       viewer.world.removeHandler('add-item', onAddItem);

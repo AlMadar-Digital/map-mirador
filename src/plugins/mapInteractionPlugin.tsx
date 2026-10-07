@@ -17,7 +17,6 @@ import {
   openPreview,
   usePreviewPosition,
 } from './poiPreviewPlugin';
-import { skipNextNestedOpen } from './nestedMapPlugin';
 import { registerTourStepper } from './sitePanelState';
 import { getTourPois, type OrderedAnnotation } from './tourOrder';
 
@@ -191,15 +190,12 @@ const MapTourController = ({
     let isPinch = false;
 
     // Selects the next (1) or previous (-1) POI of the tour, opens its preview and focuses on it.
-    // Stepping only browses: a POI with a nested map doesn't open it (in the site preset, where
-    // selecting one otherwise would).
+    // Stepping only selects, so it never opens a nested map (only pressing a pin or card does).
     const goToStep = (direction: 1 | -1) => {
       const state = latest.current;
-      const items = annotationPagesItems(state.annotationPages);
-      const step = getNextTourStep(getTourSteps(items), state.selectedAnnotationId, direction);
+      const step = getNextTourStep(getTourSteps(annotationPagesItems(state.annotationPages)), state.selectedAnnotationId, direction);
       if (!step) return;
 
-      if (items.find((item) => item.id === step.poiId)?.['dbf:linkedMap']) skipNextNestedOpen(windowId, step.poiId);
       state.dispatchSelectAnnotation(windowId, step.poiId);
       openPreview(
         { addCompanionWindow: state.dispatchAddCompanionWindow, updateCompanionWindow: state.dispatchUpdateCompanionWindow },

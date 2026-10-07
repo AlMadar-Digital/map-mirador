@@ -10,10 +10,13 @@ import {
 } from 'react';
 import DOMPurify from 'dompurify';
 import Button from '@mui/material/Button';
+import IconButton from '@mui/material/IconButton';
 import ToggleButton from '@mui/material/ToggleButton';
 import ToggleButtonGroup from '@mui/material/ToggleButtonGroup';
+import ArrowBackIcon from '@mui/icons-material/ArrowBackSharp';
 import EditIcon from '@mui/icons-material/EditSharp';
 import MapIcon from '@mui/icons-material/MapSharp';
+import PreviewIcon from '@mui/icons-material/VisibilitySharp';
 import useMediaQuery from '@mui/material/useMediaQuery';
 import { useTheme } from '@mui/material/styles';
 import OpenSeadragon from 'openseadragon';
@@ -76,11 +79,10 @@ import { readLineStyle, useSitePins, type PinResource } from './sitePins';
 // A "dumb" way to preview a POI/journey (issue #375): a Mirador companion window plugin,
 // registered alongside dbf-mirador-annotation-editor's own (see MiradorMaeViewer.tsx) via
 // Mirador's `companionWindowKey` mechanism - no core patch needed, just adding this plugin
-// to the same `plugins` array. The actual "Preview" button lives per-row in
-// dbf-mirador-annotation-editor's own CanvasListItem.jsx, right next to Edit/Delete
-// (see that package's own PR for issue #375) - it opens this companion window passing the
-// specific row's id as `annotationid`, the same convention MAE's own 'annotationCreation'
-// companion window already uses for its own Edit button.
+// to the same `plugins` array. Selecting a row of dbf-mirador-annotation-editor's annotation
+// list opens it (issue #457, replacing that list's former per-row Preview button, issue #375),
+// passing the row's id as `annotationid` - the same convention MAE's own 'annotationCreation'
+// companion window uses - as does clicking a pin on the map (poiPreviewClickPlugin below).
 //
 // Journeys (issue #378) get a richer path here: a Journey renders its ordered stops as
 // numbered cards, closer to how the public site will eventually present it. Two
@@ -91,6 +93,42 @@ import { readLineStyle, useSitePins, type PinResource } from './sitePins';
 // dbf-mirador-annotation-editor's own edit companion window (its annotationCreation plugin),
 // opened by the Edit button below exactly the way that package's annotation list opens it.
 const ANNOTATION_EDIT_CONTENT_ID = 'annotationCreation';
+
+type CompanionWindowEntry = {
+  annotationid?: string;
+  content: string | null;
+  id: string;
+  position?: string;
+  windowId: string;
+};
+
+// Issue #457: Edit replaces this preview (and any other companion window beside the map - the
+// left-hand sidebar stays) with dbf-mirador-annotation-editor's form, telling the form which
+// preview to bring back once the annotation is saved (its `returnToPreview`, the same contract
+// as that package's own annotationPreview.js).
+export const editInPlaceOfPreview =
+  (windowId: string, previewCompanionWindowId: string, annotationId: string) =>
+  (dispatch: (action: unknown) => void, getState: () => unknown) => {
+    const companionWindows = Object.values(
+      getCompanionWindows(getState()) as Record<string, CompanionWindowEntry>
+    ).filter((cw) => cw.windowId === windowId);
+    const preview = companionWindows.find((cw) => cw.id === previewCompanionWindowId);
+
+    companionWindows
+      .filter((cw) => cw.position !== 'left')
+      .forEach((cw) => dispatch(removeCompanionWindow(windowId, cw.id)));
+
+    dispatch(
+      addCompanionWindow(windowId, {
+        annotationid: annotationId,
+        content: ANNOTATION_EDIT_CONTENT_ID,
+        position: 'right',
+        ...(preview?.annotationid
+          ? { returnToPreview: { annotationid: preview.annotationid, position: preview.position } }
+          : {}),
+      })
+    );
+  };
 
 type TextualAnnotationBody = {
   purpose: 'identifying' | 'describing';
@@ -149,8 +187,10 @@ const LABELS: Record<ContentLocale, Record<string, string>> = {
   ar: {
     Journey: 'رحلة',
     POI: 'نقطة اهتمام',
+    backToJourney: 'العودة إلى الرحلة',
     contentLanguage: 'لغة المحتوى',
     edit: 'تعديل',
+    editStop: 'تعديل هذه المحطة',
     noStops: 'لا توجد محطات في هذه الرحلة بعد.',
     notFound: 'تعذر العثور على هذا العنصر - ربما تم حذفه.',
     openMap: 'فتح الخريطة',
@@ -162,6 +202,7 @@ const LABELS: Record<ContentLocale, Record<string, string>> = {
     discover: 'اكتشف الخريطة',
     followJourney: 'اتبع الرحلة',
     preview: 'معاينة',
+    previewStop: 'معاينة هذه المحطة',
     showOnMap: 'عرض على الخريطة',
     audio: 'تسجيل صوتي',
     audioForward: 'تقديم 10 ثوانٍ',
@@ -177,8 +218,10 @@ const LABELS: Record<ContentLocale, Record<string, string>> = {
   en: {
     Journey: 'Journey',
     POI: 'POI',
+    backToJourney: 'Back to journey',
     contentLanguage: 'Content language',
     edit: 'Edit',
+    editStop: 'Edit this stop',
     noStops: 'This journey has no stops yet.',
     notFound: 'This annotation could not be found - it may have been deleted.',
     openMap: 'Open map',
@@ -190,6 +233,7 @@ const LABELS: Record<ContentLocale, Record<string, string>> = {
     discover: 'Discover the map',
     followJourney: 'Follow the journey',
     preview: 'Preview',
+    previewStop: 'Preview this stop',
     showOnMap: 'Show on map',
     audio: 'Audio',
     audioForward: 'Forward 10 seconds',
@@ -793,6 +837,72 @@ const EditorToolbar = ({
   );
 };
 
+interface StopActionsProps {
+  canEdit: boolean;
+  isEditing: boolean;
+  onEdit: () => void;
+  onPreview: () => void;
+  uiLocale: ContentLocale;
+}
+
+// Issue #457: in the editor, each stop of a journey preview can be previewed on its own or edited
+// straight from its card. Clicks stay on the buttons rather than also focusing the stop on the map.
+const StopActions = ({ canEdit, isEditing, onEdit, onPreview, uiLocale }: StopActionsProps) => {
+  const labels = LABELS[uiLocale];
+  const own = (action: () => void) => (event: { stopPropagation: () => void }) => {
+    event.stopPropagation();
+    action();
+  };
+  return (
+    <div
+      dir={localeDir(uiLocale)}
+      onKeyDown={(event) => event.stopPropagation()}
+      role="toolbar"
+      style={{ display: 'flex', gap: 4, marginTop: 4 }}
+    >
+      <IconButton aria-label={labels.previewStop} onClick={own(onPreview)} size="small" title={labels.previewStop}>
+        <PreviewIcon fontSize="small" />
+      </IconButton>
+      {canEdit && (
+        <IconButton
+          aria-label={labels.editStop}
+          // Like the preview's own Edit button: one edit window at a time.
+          disabled={isEditing}
+          onClick={own(onEdit)}
+          size="small"
+          title={labels.editStop}
+        >
+          <EditIcon fontSize="small" />
+        </IconButton>
+      )}
+    </div>
+  );
+};
+
+interface JourneyLinkProps {
+  journeyTitle: string;
+  onClick: () => void;
+  uiLocale: ContentLocale;
+}
+
+// Issue #457: in the editor, a stop previewed on its own leads back to its journey.
+const JourneyLink = ({ journeyTitle, onClick, uiLocale }: JourneyLinkProps) => {
+  const labels = LABELS[uiLocale];
+  return (
+    <div dir={localeDir(uiLocale)} style={{ padding: '8px 16px 0' }}>
+      <Button
+        onClick={onClick}
+        size="small"
+        // The arrow points back the way the text reads.
+        startIcon={<ArrowBackIcon sx={uiLocale === 'ar' ? { transform: 'scaleX(-1)' } : undefined} />}
+        sx={{ textTransform: 'none' }}
+      >
+        {journeyTitle ? `${labels.backToJourney}: ${journeyTitle}` : labels.backToJourney}
+      </Button>
+    </div>
+  );
+};
+
 interface JourneyPreviewContentProps {
   editorToolbar: ReactNode;
   id: string;
@@ -803,6 +913,8 @@ interface JourneyPreviewContentProps {
   openNestedMap?: OpenNestedMap;
   position: PanelPosition;
   removeCompanionWindow: typeof removeCompanionWindow;
+  // Editor only: each stop card's own actions.
+  renderStopActions?: (poi: RawAnnotation) => ReactNode;
   selectAnnotation: typeof selectAnnotation;
   selectedAnnotationId?: string;
   selectedStopLinkedMapManifestId?: string | null;
@@ -818,6 +930,7 @@ const JourneyPreviewContent = ({
   openNestedMap: dispatchOpenNestedMap,
   position,
   removeCompanionWindow: dispatchRemoveCompanionWindow,
+  renderStopActions,
   selectAnnotation: dispatchSelectAnnotation,
   selectedAnnotationId,
   selectedStopLinkedMapManifestId = null,
@@ -1085,6 +1198,7 @@ const JourneyPreviewContent = ({
                   // eslint-disable-next-line react/no-danger -- description is CKEditor HTML, the same content the public site will eventually render
                   <div dangerouslySetInnerHTML={{ __html: description }} />
                 )}
+                {renderStopActions?.(poi)}
               </div>
             </div>
           );
@@ -1107,6 +1221,7 @@ interface PoiPreviewContentProps {
   loading?: boolean;
   site?: boolean;
   id: string;
+  journeyLink?: ReactNode;
   linkedMapManifestId: string | null;
   locale: ContentLocale;
   openNestedMap: OpenNestedMap;
@@ -1120,6 +1235,7 @@ const PoiPreviewContent = ({
   carried = false,
   editorToolbar,
   id,
+  journeyLink = null,
   linkedMapManifestId,
   loading = false,
   locale,
@@ -1195,6 +1311,7 @@ const PoiPreviewContent = ({
   return (
     <CompanionWindow id={id} title={title || (kind && labels[kind]) || labels.preview} windowId={windowId}>
       {editorToolbar}
+      {journeyLink}
       <div dir={localeDir(locale)} lang={locale} style={{ padding: 16 }}>
         {!annotation && <p>{labels.notFound}</p>}
         {description && (
@@ -1270,15 +1387,19 @@ const MapInfoContent = ({
 };
 
 interface PreviewContentProps {
-  addCompanionWindow?: typeof addCompanionWindow;
   annotation: RawAnnotation | null;
   canEdit?: boolean;
   carried?: boolean;
+  // The editor isn't read-only: an annotation it has maeData for can be edited.
+  canEditAnnotations?: boolean;
+  editInPlaceOfPreview?: (windowId: string, previewCompanionWindowId: string, annotationId: string) => void;
   hasAnnotationEditor?: boolean;
   loading?: boolean;
   selectedStopLinkedMapManifestId?: string | null;
   id: string;
   isEditing?: boolean;
+  // A POI's own journey, when on this canvas.
+  journey?: RawAnnotation | null;
   journeyPois: RawAnnotation[];
   linkedMapManifestId: string | null;
   locale: ContentLocale;
@@ -1289,19 +1410,22 @@ interface PreviewContentProps {
   selectAnnotation: typeof selectAnnotation;
   selectedAnnotationId?: string;
   site?: boolean;
+  updateCompanionWindow?: typeof updateCompanionWindow;
   windowId: string;
 }
 
 const PreviewContent = ({
-  addCompanionWindow: dispatchAddCompanionWindow,
   annotation,
   canEdit = false,
   carried = false,
+  canEditAnnotations = false,
+  editInPlaceOfPreview: dispatchEdit,
   hasAnnotationEditor = false,
   loading = false,
   selectedStopLinkedMapManifestId = null,
   id,
   isEditing = false,
+  journey = null,
   journeyPois,
   linkedMapManifestId,
   locale,
@@ -1312,6 +1436,7 @@ const PreviewContent = ({
   selectAnnotation: dispatchSelectAnnotation,
   selectedAnnotationId,
   site,
+  updateCompanionWindow: dispatchUpdateCompanionWindow,
   windowId,
 }: PreviewContentProps) => {
   // Starts in the UI's language; kept while the same preview window moves to another annotation.
@@ -1325,14 +1450,35 @@ const PreviewContent = ({
       contentLocale={contentLocale}
       isEditing={isEditing}
       onContentLocaleChange={setContentLocale}
-      onEdit={() =>
-        annotation &&
-        dispatchAddCompanionWindow?.(windowId, {
-          annotationid: annotation.id,
-          content: ANNOTATION_EDIT_CONTENT_ID,
-          position: 'right',
-        })
-      }
+      onEdit={() => annotation && dispatchEdit?.(windowId, id, annotation.id)}
+      uiLocale={locale}
+    />
+  );
+
+  // Moves this preview window to another annotation, keeping `selectedId` highlighted on the map
+  // (and, in a journey, its stop's card scrolled to).
+  const showInPreview = (annotationId: string, selectedId: string) => {
+    dispatchUpdateCompanionWindow?.(windowId, id, { annotationid: annotationId });
+    dispatchSelectAnnotation(windowId, selectedId);
+  };
+
+  const renderStopActions =
+    hasAnnotationEditor &&
+    ((poi: RawAnnotation) => (
+      <StopActions
+        canEdit={canEditAnnotations && !!poi.maeData}
+        isEditing={isEditing}
+        // Saving brings this journey's preview back (see editInPlaceOfPreview).
+        onEdit={() => dispatchEdit?.(windowId, id, poi.id)}
+        onPreview={() => showInPreview(poi.id, poi.id)}
+        uiLocale={locale}
+      />
+    ));
+
+  const journeyLink = hasAnnotationEditor && annotation && journey && (
+    <JourneyLink
+      journeyTitle={textBody(journey, shownLocale, 'identifying')}
+      onClick={() => showInPreview(journey.id, annotation.id)}
       uiLocale={locale}
     />
   );
@@ -1361,6 +1507,7 @@ const PreviewContent = ({
         pois={journeyPois}
         position={position}
         removeCompanionWindow={dispatchRemoveCompanionWindow}
+        renderStopActions={renderStopActions || undefined}
         selectAnnotation={dispatchSelectAnnotation}
         selectedAnnotationId={selectedAnnotationId}
         selectedStopLinkedMapManifestId={selectedStopLinkedMapManifestId}
@@ -1375,6 +1522,7 @@ const PreviewContent = ({
       carried={carried}
       editorToolbar={editorToolbar}
       id={id}
+      journeyLink={journeyLink || null}
       linkedMapManifestId={linkedMapManifestId}
       loading={loading}
       locale={shownLocale}
@@ -1413,16 +1561,20 @@ const poiPreviewCompanionWindowPlugin = {
       annotation && annotation['dbf:kind'] === 'Journey' ? getOrderedJourneyPois(items, annotation.id) : [];
     const selectedAnnotationId = getSelectedAnnotationId(state, { windowId }) as string | undefined;
     const selectedStop = journeyPois.find((poi) => poi.id === selectedAnnotationId);
+    const canEditAnnotations = hasAnnotationEditor && config.annotation?.readonly !== true;
+    const journeyId = annotation?.['dbf:kind'] === 'POI' ? annotation['dbf:journey']?.id : undefined;
     return {
       annotation,
       // Mirrors the annotation list's own Edit button: shown for the annotations the editor can
       // edit, unless it's read-only, and disabled while an edit window is already open.
-      canEdit: hasAnnotationEditor && config.annotation?.readonly !== true && !!annotation?.maeData,
+      canEdit: canEditAnnotations && !!annotation?.maeData,
+      canEditAnnotations,
       carried,
       hasAnnotationEditor,
       isEditing:
         (getCompanionWindowsForContent(state, { content: ANNOTATION_EDIT_CONTENT_ID, windowId }) as unknown[])
           .length > 0,
+      journey: (journeyId && items.find((item) => item.id === journeyId && item['dbf:kind'] === 'Journey')) || null,
       journeyPois,
       // Only a Nested Map point whose map the host can resolve opens it (an "Open map" button
       // in the editor; on focus in the site preset). A carried POI's nested map is the one open.
@@ -1437,7 +1589,13 @@ const poiPreviewCompanionWindowPlugin = {
       site: config.maps?.site === true,
     };
   },
-  mapDispatchToProps: { addCompanionWindow, openNestedMap, removeCompanionWindow, selectAnnotation },
+  mapDispatchToProps: {
+    editInPlaceOfPreview,
+    openNestedMap,
+    removeCompanionWindow,
+    selectAnnotation,
+    updateCompanionWindow,
+  },
 };
 
 type AnnotationPages = Record<string, { json?: { items?: unknown[] } }>;

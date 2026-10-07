@@ -1,7 +1,8 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import PropTypes from 'prop-types';
-import { getContentLocale, poiPreviewPlugins } from '../../../src/plugins/poiPreviewPlugin.tsx';
+import { editInPlaceOfPreview, getContentLocale, poiPreviewPlugins } from '../../../src/plugins/poiPreviewPlugin.tsx';
+import { getVisibleCanvases } from '../../../src/index';
 
 // Only the preview's own content is under test here, not Mirador's companion window chrome.
 vi.mock('../../../src/index', async (importOriginal) => {
@@ -16,7 +17,12 @@ vi.mock('../../../src/index', async (importOriginal) => {
   }
   CompanionWindowStub.propTypes = { children: PropTypes.node, title: PropTypes.string.isRequired };
 
-  return { ...(await importOriginal()), ConnectedCompanionWindow: CompanionWindowStub };
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    ConnectedCompanionWindow: CompanionWindowStub,
+    getVisibleCanvases: vi.fn(actual.getVisibleCanvases),
+  };
 });
 
 const [{ component: PreviewContent, mapStateToProps }] = poiPreviewPlugins;
@@ -161,9 +167,9 @@ describe('poiPreviewPlugin locale', () => {
     const renderEditorPreview = (props = {}) =>
       render(
         <PreviewContent
-          addCompanionWindow={vi.fn()}
           annotation={editablePoi}
           canEdit
+          editInPlaceOfPreview={vi.fn()}
           hasAnnotationEditor
           id="cw"
           journeyPois={[]}
@@ -202,16 +208,43 @@ describe('poiPreviewPlugin locale', () => {
       expect(screen.getByRole('heading', { name: 'القاهرة' })).toBeInTheDocument();
     });
 
-    it("opens the editor's edit window, like the annotation list's Edit button", async () => {
-      const addCompanionWindow = vi.fn();
-      renderEditorPreview({ addCompanionWindow });
+    it("opens the editor's edit window in place of this preview", async () => {
+      const editInPlaceOfPreviewMock = vi.fn();
+      renderEditorPreview({ editInPlaceOfPreview: editInPlaceOfPreviewMock });
 
       await userEvent.click(screen.getByRole('button', { name: 'Edit' }));
 
-      expect(addCompanionWindow).toHaveBeenCalledWith('window', {
-        annotationid: 'poi',
-        content: 'annotationCreation',
-        position: 'right',
+      expect(editInPlaceOfPreviewMock).toHaveBeenCalledWith('window', 'cw', 'poi');
+    });
+
+    describe('editInPlaceOfPreview (issue #457)', () => {
+      it('closes the companion windows beside the map but the sidebar, and remembers the preview', () => {
+        const companionWindows = {
+          cw: { annotationid: 'journey', content: 'mapsPoiPreview', id: 'cw', position: 'right', windowId: 'window' },
+          info: { content: 'info', id: 'info', position: 'far-right', windowId: 'window' },
+          other: { content: 'mapsPoiPreview', id: 'other', position: 'right', windowId: 'elsewhere' },
+          side: { content: 'annotations', id: 'side', position: 'left', windowId: 'window' },
+        };
+        const dispatch = vi.fn();
+        editInPlaceOfPreview('window', 'cw', 'poi')(dispatch, () => ({ companionWindows }));
+        const actions = dispatch.mock.calls.map(([action]) => action);
+
+        expect(actions.filter(({ type }) => type === 'mirador/REMOVE_COMPANION_WINDOW').map(({ id }) => id)).toEqual([
+          'cw',
+          'info',
+        ]);
+        expect(actions.at(-1)).toEqual(
+          expect.objectContaining({
+            payload: expect.objectContaining({
+              annotationid: 'poi',
+              content: 'annotationCreation',
+              position: 'right',
+              returnToPreview: { annotationid: 'journey', position: 'right' },
+            }),
+            type: 'mirador/ADD_COMPANION_WINDOW',
+            windowId: 'window',
+          }),
+        );
       });
     });
 
@@ -235,6 +268,73 @@ describe('poiPreviewPlugin locale', () => {
       expect(screen.getByRole('button', { name: 'العربية' })).toHaveAttribute('aria-pressed', 'true');
     });
 
+    describe("a journey's stops (issue #457)", () => {
+      const editableStop = { ...poi, maeData: {} };
+      const lockedStop = { ...poi, id: 'locked', maeData: undefined };
+      const renderJourney = (props = {}) =>
+        renderEditorPreview({
+          annotation: journey,
+          canEditAnnotations: true,
+          journeyPois: [editableStop, lockedStop],
+          ...props,
+        });
+
+      it('previews a stop on its own, keeping it selected', async () => {
+        const selectAnnotation = vi.fn();
+        const updateCompanionWindow = vi.fn();
+        renderJourney({ selectAnnotation, updateCompanionWindow });
+
+        await userEvent.click(screen.getAllByRole('button', { name: 'Preview this stop' })[0]);
+
+        expect(updateCompanionWindow).toHaveBeenCalledWith('window', 'cw', { annotationid: 'poi' });
+        expect(selectAnnotation).toHaveBeenCalledWith('window', 'poi');
+      });
+
+      it('edits a stop in place of the journey preview, only when it can be edited', async () => {
+        const editStop = vi.fn();
+        renderJourney({ editInPlaceOfPreview: editStop });
+
+        const editButtons = screen.getAllByRole('button', { name: 'Edit this stop' });
+        expect(editButtons).toHaveLength(1);
+        await userEvent.click(editButtons[0]);
+
+        expect(editStop).toHaveBeenCalledWith('window', 'cw', 'poi');
+      });
+
+      it('has no Edit on its stops when the editor is read-only', () => {
+        renderJourney({ canEditAnnotations: false });
+
+        expect(screen.getAllByRole('button', { name: 'Preview this stop' })).toHaveLength(2);
+        expect(screen.queryByRole('button', { name: 'Edit this stop' })).not.toBeInTheDocument();
+      });
+
+      it('has no stop actions outside the editor', () => {
+        render(
+          <PreviewContent
+            annotation={journey}
+            id="cw"
+            journeyPois={[editableStop]}
+            locale="en"
+            selectAnnotation={vi.fn()}
+            windowId="window"
+          />,
+        );
+
+        expect(screen.queryByRole('button', { name: 'Preview this stop' })).not.toBeInTheDocument();
+      });
+
+      it("leads a stop's own preview back to its journey", async () => {
+        const selectAnnotation = vi.fn();
+        const updateCompanionWindow = vi.fn();
+        renderEditorPreview({ journey, selectAnnotation, updateCompanionWindow });
+
+        await userEvent.click(screen.getByRole('button', { name: 'Back to journey: Down the Nile' }));
+
+        expect(updateCompanionWindow).toHaveBeenCalledWith('window', 'cw', { annotationid: 'journey' });
+        expect(selectAnnotation).toHaveBeenCalledWith('window', 'poi');
+      });
+    });
+
     describe('mapStateToProps', () => {
       const state = ({ annotation = {}, companionWindows = {} } = {}) => ({
         annotations: {},
@@ -247,6 +347,19 @@ describe('poiPreviewPlugin locale', () => {
       it('detects the annotation editor from its storage adapter', () => {
         expect(props(state()).hasAnnotationEditor).toBe(false);
         expect(props(state({ annotation: { adapter: () => {} } })).hasAnnotationEditor).toBe(true);
+      });
+
+      it("finds a POI's journey on the canvas", () => {
+        const canvasState = {
+          annotations: { canvas: { page: { json: { items: [poi, journey] } } } },
+          companionWindows: { cw: { annotationid: 'poi' } },
+          config: {},
+          manifests: {},
+          windows: { window: {} },
+        };
+        getVisibleCanvases.mockReturnValueOnce([{ id: 'canvas' }]);
+
+        expect(mapStateToProps(canvasState, { id: 'cw', windowId: 'window' }).journey).toBe(journey);
       });
 
       it('knows when an edit window is open', () => {

@@ -141,6 +141,38 @@ describe('CanvasAnnotationDisplay', () => {
     });
   });
   describe('svgContext', () => {
+    it("applies a host's line style to journeys only, in every state", () => {
+      const lineStyle = { lineDash: [6, 4], lineWidth: 2, strokeStyle: '#0000ff' };
+      const shape = (extra) =>
+        new AnnotationResource({
+          motivation: ['oa:commenting'],
+          on: {
+            selector: {
+              item: {
+                '@type': 'oa:SvgSelector',
+                value: "<svg xmlns='http://www.w3.org/2000/svg'><path d='M0,0 L10,10' stroke='#00bfff' stroke-width='2' /></svg>",
+              },
+            },
+          },
+          ...extra,
+        });
+
+      const journey = createMockContext();
+      const journeyLine = createSubject({ lineStyle, resource: shape({ 'dbf:kind': 'Journey' }), selected: true });
+      journeyLine.context = journey;
+      journeyLine.svgContext();
+      expect(journey.strokeStyle).toEqual('#0000ff');
+      expect(journey.lineWidth).toEqual(4);
+      expect(journey.setLineDash).toHaveBeenLastCalledWith([12, 8]);
+
+      const area = createMockContext();
+      const areaShape = createSubject({ lineStyle, resource: shape({}) });
+      areaShape.context = area;
+      areaShape.svgContext();
+      expect(area.strokeStyle).toEqual('#00bfff');
+      expect(area.setLineDash).not.toHaveBeenCalled();
+    });
+
     it('draws the paths with selected arguments', () => {
       let alphaAtFill;
       const context = createMockContext(() => {

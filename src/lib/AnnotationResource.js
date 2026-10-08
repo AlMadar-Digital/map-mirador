@@ -134,6 +134,11 @@ export default class AnnotationResource {
     return this.resource['dbf:journey']?.order ?? null;
   }
 
+  /** whether this is a journey (`dbf:kind`), whose line a host page can style (CanvasAnnotationDisplay) */
+  get isJourney() {
+    return this.resource['dbf:kind'] === 'Journey';
+  }
+
   /** the id of the journey the POI belongs to (see mirador-annotation-editor's `dbf:journey`), or null when the POI is not part of a journey */
   get journeyId() {
     return this.resource['dbf:journey']?.id ?? null;

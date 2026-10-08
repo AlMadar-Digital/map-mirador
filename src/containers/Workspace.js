@@ -12,6 +12,8 @@ import * as actions from '../state/actions';
  */
 const mapStateToProps = (state) => ({
   allowNewWindows: getConfig(state).workspace.allowNewWindows,
+  // MapViewer's site preset, embedded in a host page that has its own landmarks and headings.
+  site: getConfig(state).maps?.site === true,
   maximizedWindowIds: getMaximizedWindowsIds(state),
   windowIds: getWindowIds(state),
   workspaceId: getWorkspace(state).id,

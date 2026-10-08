@@ -39,6 +39,12 @@ function createWrapper(props) {
 /* eslint-disable testing-library/no-container, testing-library/no-node-access */
 describe('Workspace', () => {
   describe('if workspace type is elastic', () => {
+    it('leaves the h1 to the host page in the site preset', () => {
+      createWrapper({ site: true });
+
+      expect(screen.queryByRole('heading', { level: 1 })).not.toBeInTheDocument();
+    });
+
     it('should render <WorkspaceElastic/> properly', () => {
       const { container } = createWrapper({ workspaceType: 'elastic' });
 

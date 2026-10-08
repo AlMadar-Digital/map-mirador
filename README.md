@@ -58,6 +58,14 @@ function App() {
 
 Run `npm start` and open `localhost:4444/demo/map-viewer.html` to see it live.
 
+Pass `site` to opt in to the **site preset**, the public site's map UI (panel, pins, mobile
+sheet, journey cards, audio player). It renders plain markup with `.dbf-map-*` class names
+for the host page to style, so only use it with that CSS in place:
+
+```jsx
+<MapViewer manifestId={manifestUrl} lang="ar" site />
+```
+
 ### Mirador
 
 Check the `demo` folder for runnable examples, including `demo/index.html` (raw

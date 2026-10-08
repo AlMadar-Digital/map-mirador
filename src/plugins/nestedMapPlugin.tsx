@@ -1,17 +1,25 @@
+import { useCallback, useEffect, useRef } from 'react';
+import OpenSeadragon from 'openseadragon';
 import Button from '@mui/material/Button';
 import ArrowBackIcon from '@mui/icons-material/ArrowBackSharp';
 import {
+  addCompanionWindow,
   getCompanionWindows,
   getConfig,
   getSelectedAnnotationId,
+  getViewer,
   getWindow,
   getWindowViewType,
   deselectAnnotation,
   removeCompanionWindow,
+  selectAnnotation,
   setWindowViewType,
   updateWindow,
   // Relative, not `from 'dbf-mirador'` - see poiPreviewPlugin.tsx.
 } from '../index';
+import { NESTED_ORIGIN_ID, POI_PREVIEW_CONTENT_ID } from './previewIds';
+import { requestPinFocus } from './sitePins';
+import { isInsideMap } from './sitePanelState';
 
 // Nested maps (issue #427, following #407): a "Nested Map" point is a POI whose
 // `dbf:linkedMap` points at another map. Opening it swaps the map shown in the same Mirador
@@ -36,7 +44,20 @@ export type LinkedMap = { id: string; titleEn?: string | null; manifestId?: stri
  */
 export type LinkedMapManifestResolver = (linkedMap: LinkedMap) => string | null | undefined;
 
-type MapHistoryEntry = { manifestId: string };
+/**
+ * Where a nested map was opened from, in the site preset: the POI shown in the panel while the
+ * nested map is open, and what Back restores on the parent map (its viewport, selection and
+ * preview).
+ */
+export type NestedOrigin = {
+  annotation: unknown;
+  position?: 'bottom' | 'right';
+  previewAnnotationId?: string;
+  selectedAnnotationId?: string;
+  viewer?: Record<string, unknown>;
+};
+
+type MapHistoryEntry = { manifestId: string; origin?: NestedOrigin };
 type MiradorWindow = { id: string; manifestId?: string; mapHistory?: MapHistoryEntry[] };
 type Dispatch = (action: unknown) => void;
 type GetState = () => unknown;
@@ -45,16 +66,89 @@ type GetState = () => unknown;
  * The URL of a linked map's manifest: the one the annotation carries, else the one the host's
  * resolver gives, else null.
  */
-export const getLinkedMapManifestId = (state: unknown, linkedMap?: LinkedMap | null): string | null => {
+export const resolveLinkedMapManifestId = (
+  linkedMap?: LinkedMap | null,
+  resolve?: LinkedMapManifestResolver | null
+): string | null => {
   if (!linkedMap?.id) return null;
   if (linkedMap.manifestId) return linkedMap.manifestId;
-  const resolve = (getConfig(state) as { maps?: { getLinkedMapManifestId?: LinkedMapManifestResolver } }).maps
-    ?.getLinkedMapManifestId;
   return resolve?.(linkedMap) || null;
 };
 
+/** The host's resolver for linked maps without a manifest URL (`maps.getLinkedMapManifestId`). */
+export const getLinkedMapResolver = (state: unknown): LinkedMapManifestResolver | null =>
+  (getConfig(state) as { maps?: { getLinkedMapManifestId?: LinkedMapManifestResolver } }).maps
+    ?.getLinkedMapManifestId ?? null;
+
+/** As resolveLinkedMapManifestId, with the host's resolver from the store. */
+export const getLinkedMapManifestId = (state: unknown, linkedMap?: LinkedMap | null): string | null =>
+  resolveLinkedMapManifestId(linkedMap, getLinkedMapResolver(state));
+
 const getMapHistory = (state: unknown, windowId: string): MapHistoryEntry[] =>
   (getWindow(state, { windowId }) as MiradorWindow | undefined)?.mapHistory ?? [];
+
+/** Where the window's current nested map was opened from, if it was opened from a POI. */
+export const getNestedOrigin = (state: unknown, windowId: string): NestedOrigin | null =>
+  getMapHistory(state, windowId).at(-1)?.origin ?? null;
+
+// The viewport Back returns to. Mirador fits a newly shown map to the view once its first tile
+// loads (OpenSeadragonComponent), so this is applied right after that.
+const pendingViewport = new Map<string, { x?: number; y?: number; zoom?: number }>();
+
+/** True while Back is about to restore the parent map's view (fillView.ts leaves it alone). */
+export const hasPendingParentViewport = (windowId: string) => pendingViewport.has(windowId);
+
+type OsdViewer = {
+  addOnceHandler: (name: string, handler: () => void) => void;
+  removeHandler: (name: string, handler: () => void) => void;
+  viewport: { panTo: (point: OpenSeadragon.Point, immediately?: boolean) => void; zoomTo: (zoom: number, refPoint?: null, immediately?: boolean) => void };
+  world: {
+    addHandler: (name: string, handler: () => void) => void;
+    getItemCount: () => number;
+    removeHandler: (name: string, handler: () => void) => void;
+  };
+};
+
+/** Puts the parent map back where it was left, once its image is in the viewer. */
+export const useRestoreParentViewport = (
+  viewer: OsdViewer | null | undefined,
+  windowId: string,
+  // Writes the viewport to Mirador's store too, so Mirador keeps it.
+  storeViewport?: (windowId: string, viewport: Record<string, unknown>) => void
+) => {
+  useEffect(() => {
+    if (!viewer) return undefined;
+    let frame = 0;
+    const apply = () => {
+      const saved = pendingViewport.get(windowId);
+      if (!saved) return;
+      // Right after Mirador's own fit, which runs in the same 'tile-loaded' event.
+      frame = requestAnimationFrame(() => {
+        pendingViewport.delete(windowId);
+        if (typeof saved.zoom === 'number') viewer.viewport.zoomTo(saved.zoom, null, true);
+        if (typeof saved.x === 'number' && typeof saved.y === 'number') {
+          viewer.viewport.panTo(new OpenSeadragon.Point(saved.x, saved.y), true);
+        }
+        storeViewport?.(windowId, saved);
+      });
+    };
+    // Only once the parent's image is added: right after Back the viewer still holds the
+    // nested map's.
+    const restore = () => {
+      if (pendingViewport.has(windowId)) viewer.addOnceHandler('tile-loaded', apply);
+    };
+    viewer.world.addHandler('add-item', restore);
+    return () => {
+      cancelAnimationFrame(frame);
+      viewer.world.removeHandler('add-item', restore);
+      viewer.removeHandler('tile-loaded', apply);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `storeViewport` is a bound action creator
+  }, [viewer, windowId]);
+};
+
+const openPreviewOn = (windowId: string, annotationId: string, position: 'bottom' | 'right' = 'right') =>
+  addCompanionWindow(windowId, { annotationid: annotationId, content: POI_PREVIEW_CONTENT_ID, position });
 
 /**
  * Shows another manifest in the window, starting it fresh: what was selected or previewed
@@ -79,29 +173,80 @@ const switchWindowMap = (windowId: string, manifestId: string, mapHistory: MapHi
     dispatch(updateWindow(windowId, { canvasId: null, manifestId, mapHistory }));
   };
 
-/** Opens a nested map in place of the window's current map, remembering the way back. */
-export const openNestedMap = (windowId: string, manifestId: string) => (dispatch: Dispatch, getState: GetState) => {
-  const state = getState();
-  const currentManifestId = (getWindow(state, { windowId }) as MiradorWindow | undefined)?.manifestId;
-  if (!currentManifestId || currentManifestId === manifestId) return;
+/**
+ * Opens a nested map in place of the window's current map, remembering the way back. Given the
+ * POI it was opened from (the site preset), the panel keeps showing that POI, and Back returns
+ * to the parent map as it was.
+ */
+export const openNestedMap =
+  (windowId: string, manifestId: string, origin?: Omit<NestedOrigin, 'viewer'>) =>
+  (dispatch: Dispatch, getState: GetState) => {
+    const state = getState();
+    const currentManifestId = (getWindow(state, { windowId }) as MiradorWindow | undefined)?.manifestId;
+    if (!currentManifestId || currentManifestId === manifestId) return;
 
-  dispatch(switchWindowMap(windowId, manifestId, [...getMapHistory(state, windowId), { manifestId: currentManifestId }]));
-};
+    const entry: MapHistoryEntry = { manifestId: currentManifestId };
+    if (origin) {
+      entry.origin = { ...origin, viewer: getViewer(state, { windowId }) as Record<string, unknown> | undefined };
+    }
+    dispatch(switchWindowMap(windowId, manifestId, [...getMapHistory(state, windowId), entry]));
+    if (origin?.annotation) dispatch(openPreviewOn(windowId, NESTED_ORIGIN_ID, origin.position));
+  };
 
-/** Goes back to the map the current nested map was opened from. */
+/** Goes back to the map the current nested map was opened from, as it was left. */
 export const backToParentMap = (windowId: string) => (dispatch: Dispatch, getState: GetState) => {
   const mapHistory = getMapHistory(getState(), windowId);
   const parent = mapHistory[mapHistory.length - 1];
   if (!parent) return;
 
   dispatch(switchWindowMap(windowId, parent.manifestId, mapHistory.slice(0, -1)));
+  const { origin } = parent;
+  if (!origin) return;
+  if (origin.viewer) pendingViewport.set(windowId, origin.viewer as { x?: number; y?: number; zoom?: number });
+  if (origin.selectedAnnotationId) {
+    dispatch(selectAnnotation(windowId, origin.selectedAnnotationId));
+    requestPinFocus(windowId, origin.selectedAnnotationId);
+  }
+  if (origin.previewAnnotationId) dispatch(openPreviewOn(windowId, origin.previewAnnotationId, origin.position));
 };
 
 // Only the two content locales reach the maps UI - see poiPreviewPlugin.tsx's getContentLocale.
 const BACK_LABEL: Record<'en' | 'ar', string> = { ar: 'رجوع', en: 'Back' };
 
+interface SiteBackButtonProps {
+  label: string;
+  onBack: () => void;
+}
+
+/**
+ * The site preset's Back: a plain button in the top start corner, where the host's Close sits
+ * (`.dbf-map__back`, styled by the host). It takes focus when the nested map opens, and Escape
+ * pressed in the map goes back before it would close the whole view (the host listens in the
+ * bubble phase).
+ */
+const SiteBackButton = ({ label, onBack }: SiteBackButtonProps) => {
+  const ref = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    ref.current?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented || !isInsideMap(event, ref.current)) return;
+      event.preventDefault();
+      onBack();
+    };
+    document.addEventListener('keydown', onKeyDown, true);
+    return () => document.removeEventListener('keydown', onKeyDown, true);
+  }, [onBack]);
+
+  return (
+    <button className="dbf-map__back" onClick={onBack} ref={ref} type="button">
+      {label}
+    </button>
+  );
+};
+
 interface NestedMapBackButtonProps {
   backToParentMap: (windowId: string) => void;
+  site?: boolean;
   canGoBack: boolean;
   language?: string;
   windowId: string;
@@ -115,10 +260,13 @@ const NestedMapBackButton = ({
   backToParentMap: dispatchBackToParentMap,
   canGoBack,
   language,
+  site = false,
   windowId,
 }: NestedMapBackButtonProps) => {
+  const onBack = useCallback(() => dispatchBackToParentMap(windowId), [dispatchBackToParentMap, windowId]);
   if (!canGoBack) return null;
   const locale = (language ?? '').split('-')[0].toLowerCase() === 'ar' ? 'ar' : 'en';
+  if (site) return <SiteBackButton label={BACK_LABEL[locale]} onBack={onBack} />;
 
   return (
     <Button
@@ -144,6 +292,7 @@ const nestedMapBackButtonPlugin = {
   mapStateToProps: (state: unknown, { windowId }: { windowId: string }) => ({
     canGoBack: getMapHistory(state, windowId).length > 0,
     language: (getConfig(state) as { language?: string }).language,
+    site: (getConfig(state) as { maps?: { site?: boolean } }).maps?.site === true,
   }),
   mode: 'add',
   target: 'OpenSeadragonViewer',

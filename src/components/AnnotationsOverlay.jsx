@@ -92,6 +92,7 @@ export function AnnotationsOverlay({
   highlightAllAnnotations = false,
   hoverAnnotation = () => {},
   hoveredAnnotationIds = [],
+  lineStyle = null,
   palette = {},
   searchAnnotations = [],
   selectAnnotation = () => {},
@@ -142,6 +143,7 @@ export function AnnotationsOverlay({
         const canvasAnnotationDisplay = new CanvasAnnotationDisplay({
           hovered: hoveredAnnotationIds.includes(resource.id),
           journeyStopNumber: stopNumbers.get(resource.id),
+          lineStyle,
           offset,
           palette: {
             ...currentPalette,
@@ -157,7 +159,7 @@ export function AnnotationsOverlay({
         canvasAnnotationDisplay.toContext(context);
       });
     },
-    [osdCanvasOverlay, viewer, canvasWorld, highlightAllAnnotations, hoveredAnnotationIds, selectedAnnotationId],
+    [osdCanvasOverlay, viewer, canvasWorld, highlightAllAnnotations, hoveredAnnotationIds, lineStyle, selectedAnnotationId],
   );
 
   const renderAnnotations = useCallback(() => {
@@ -373,6 +375,12 @@ AnnotationsOverlay.propTypes = {
   drawSearchAnnotations: PropTypes.bool,
   highlightAllAnnotations: PropTypes.bool,
   hoverAnnotation: PropTypes.func,
+  lineStyle: PropTypes.shape({
+    curve: PropTypes.bool,
+    lineDash: PropTypes.arrayOf(PropTypes.number),
+    lineWidth: PropTypes.number,
+    strokeStyle: PropTypes.string,
+  }),
   hoveredAnnotationIds: PropTypes.arrayOf(PropTypes.string),
   palette: PropTypes.object,
   searchAnnotations: PropTypes.arrayOf(PropTypes.object),

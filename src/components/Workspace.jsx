@@ -54,6 +54,7 @@ export function Workspace({
   addWindow = () => {},
   allowNewWindows = true,
   maximizedWindowIds = [],
+  site = false,
   windowIds = [],
   workspaceId,
   workspaceType,
@@ -105,9 +106,12 @@ export function Workspace({
   return (
     <IIIFDropTarget onDrop={handleDrop}>
       <Root ownerState={ownerState} className={classNames(ns('workspace-viewport'))}>
-        <Typography style={visuallyHidden} component="h1">
-          {t('miradorViewer')}
-        </Typography>
+        {/* The host page has its own h1 (T-37). */}
+        {!site && (
+          <Typography style={visuallyHidden} component="h1">
+            {t('miradorViewer')}
+          </Typography>
+        )}
         {workspaceByType()}
       </Root>
     </IIIFDropTarget>
@@ -117,6 +121,7 @@ export function Workspace({
 Workspace.propTypes = {
   addWindow: PropTypes.func,
   allowNewWindows: PropTypes.bool,
+  site: PropTypes.bool,
   maximizedWindowIds: PropTypes.arrayOf(PropTypes.string),
   windowIds: PropTypes.arrayOf(PropTypes.string),
   workspaceId: PropTypes.string.isRequired,

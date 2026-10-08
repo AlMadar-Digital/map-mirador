@@ -62,10 +62,22 @@ const osdElementWithOverlays = (overlays) => {
   const element = document.createElement('div');
   element.getBoundingClientRect = () => box(0, 0, 1000, 500);
   windowElement.appendChild(element);
-  overlays.forEach(({ position, rect }) => {
+  windowElement.getBoundingClientRect = () => box(0, 0, 1000, 500);
+  overlays.forEach(({ animations = [], layout, position, rect }) => {
     const overlay = document.createElement('aside');
     overlay.className = `mirador-companion-window-${position}`;
     overlay.getBoundingClientRect = () => rect;
+    overlay.getAnimations = () => animations;
+    if (layout) {
+      // Its untransformed layout box, inside the window
+      Object.defineProperties(overlay, {
+        offsetHeight: { value: layout.height },
+        offsetLeft: { value: layout.left },
+        offsetParent: { value: windowElement },
+        offsetTop: { value: layout.top },
+        offsetWidth: { value: layout.width },
+      });
+    }
     windowElement.appendChild(overlay);
   });
   return element;
@@ -125,6 +137,19 @@ describe('poiPreviewPlugin viewport helpers', () => {
     it('ignores companion windows laid out next to the map', () => {
       const element = osdElementWithOverlays([{ position: 'right', rect: box(1000, 0, 400, 500) }]);
       expect(getVisibleMapArea({ element, viewport })).toEqual({ height: 500, width: 1000, x: 0, y: 0 });
+    });
+
+    it('counts a panel that is still sliding in where it will end up (T-07)', () => {
+      const element = osdElementWithOverlays([
+        {
+          animations: [{ animationName: 'slide-in', finished: Promise.resolve(), playState: 'running' }],
+          layout: box(600, 0, 400, 500),
+          position: 'right',
+          // Mid-slide, mostly off the map
+          rect: box(950, 0, 400, 500),
+        },
+      ]);
+      expect(getVisibleMapArea({ element, viewport })).toEqual({ height: 500, width: 600, x: 0, y: 0 });
     });
 
     it('falls back to the whole map when the panel covers nearly all of it', () => {
@@ -194,6 +219,28 @@ describe('poiPreviewPlugin viewport helpers', () => {
       ensurePointVisible('window', { x: 800, y: 250 });
 
       expect(fittedRect(viewport).width).toBeCloseTo(1);
+      expect(pointAtPixel(viewport, { x: 300, y: 250 })).toEqual({ x: 800, y: 250 });
+    });
+
+    it('waits for a panel moving by a transition (a host reopening it) before measuring (T-07)', async () => {
+      let settle;
+      const finished = new Promise((resolve) => {
+        settle = resolve;
+      });
+      const overlay = { position: 'right', rect: box(1000, 0, 400, 500) };
+      const element = osdElementWithOverlays([
+        { ...overlay, animations: [{ finished, playState: 'running', transitionProperty: 'translate' }] },
+      ]);
+      setViewer({ element, viewport });
+
+      ensurePointVisible('window', { x: 800, y: 250 });
+      expect(viewport.fitBounds).not.toHaveBeenCalled();
+
+      // The panel has reopened: it now covers x >= 600.
+      element.parentElement.querySelector('aside').getBoundingClientRect = () => box(600, 0, 400, 500);
+      settle();
+      await vi.waitFor(() => expect(viewport.fitBounds).toHaveBeenCalled());
+
       expect(pointAtPixel(viewport, { x: 300, y: 250 })).toEqual({ x: 800, y: 250 });
     });
 

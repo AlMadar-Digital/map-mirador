@@ -40,6 +40,7 @@ export function WorkspaceArea({
   isWorkspaceAddVisible = false,
   isWorkspaceControlPanelVisible,
   lang = undefined,
+  site = false,
 }) {
   const { t } = useTranslation();
   // eslint-disable-next-line prefer-rest-params
@@ -48,7 +49,14 @@ export function WorkspaceArea({
   return (
     <Root ownerState={ownerState}>
       {isWorkspaceControlPanelVisible && <WorkspaceControlPanel variant={controlPanelVariant} />}
-      <ViewerArea className={ns('viewer')} lang={lang} aria-label={t('workspace')} {...(areaRef ? { ref: areaRef } : {})}>
+      <ViewerArea
+        // Not a second `main` inside the host page's own (T-37).
+        as={site ? 'div' : undefined}
+        className={ns('viewer')}
+        lang={lang}
+        aria-label={site ? undefined : t('workspace')}
+        {...(areaRef ? { ref: areaRef } : {})}
+      >
         {isWorkspaceAddVisible ? <WorkspaceAdd /> : <Workspace />}
         <ErrorDialog />
         <BackgroundPluginArea />
@@ -63,4 +71,5 @@ WorkspaceArea.propTypes = {
   isWorkspaceAddVisible: PropTypes.bool,
   isWorkspaceControlPanelVisible: PropTypes.bool.isRequired,
   lang: PropTypes.string,
+  site: PropTypes.bool,
 };

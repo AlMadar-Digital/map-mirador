@@ -11,6 +11,9 @@ import { AppProviders } from '../components/AppProviders';
  */
 const mapStateToProps = (state) => ({
   language: getConfig(state).language,
+  // A host page that styles the viewer itself (MapViewer's site preset) needs Mirador's
+  // Emotion styles inserted before its own CSS, so its rules win at equal specificity.
+  prependStyles: getConfig(state).styles?.prepend === true,
   theme: getTheme(state),
   translations: getConfig(state).translations,
 });

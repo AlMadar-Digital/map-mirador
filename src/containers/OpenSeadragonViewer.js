@@ -41,6 +41,8 @@ const mapStateToProps = (state, { windowId }) => {
     }),
     nonTiledImages: getVisibleCanvasNonTiledResources(state, { windowId }),
     osdConfig: getConfig(state).osdConfig,
+    // The site preset announces POI selections itself rather than every change on the map.
+    site: getConfig(state).maps?.site === true,
     viewerConfig: getViewer(state, { windowId }),
   };
 };

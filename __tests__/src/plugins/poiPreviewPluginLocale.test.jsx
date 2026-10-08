@@ -110,6 +110,64 @@ describe('poiPreviewPlugin locale', () => {
 
       expect(screen.getByText('تعذر العثور على هذا العنصر - ربما تم حذفه.')).toBeInTheDocument();
     });
+
+    describe('media (issue #464)', () => {
+      const withMedia = (media) => ({ ...poi, 'dbf:mediaEn': media });
+      // eslint-disable-next-line testing-library/no-node-access -- the thumbnail is decorative, with no role
+      const thumbnail = () => document.querySelector('[data-testid="poi-preview-media-thumbnail"]');
+
+      it("shows an image's thumbnail next to its title", () => {
+        renderPreview(
+          withMedia({
+            id: 'iiif-1',
+            source: 'iiif-image',
+            thumbnailUrl: 'https://iiif.example/iiif/3/folio.jpg/full/400,/0/default.jpg',
+            title: 'folio.jpg — Additional 01',
+          }),
+          'en',
+        );
+
+        expect(screen.getByText('folio.jpg — Additional 01')).toBeInTheDocument();
+        expect(thumbnail().tagName).toBe('IMG');
+        expect(thumbnail()).toHaveAttribute('src', 'https://iiif.example/iiif/3/folio.jpg/full/400,/0/default.jpg');
+      });
+
+      it("shows a video upload's first frame next to its file name", () => {
+        renderPreview(
+          withMedia({
+            id: '42',
+            mime: 'video/mp4',
+            source: 'upload',
+            thumbnailUrl: 'https://cdn.example/clip.mp4',
+            title: 'clip.mp4',
+            url: 'https://cdn.example/clip.mp4',
+          }),
+          'en',
+        );
+
+        expect(screen.getByText('clip.mp4')).toBeInTheDocument();
+        expect(thumbnail().tagName).toBe('VIDEO');
+        expect(thumbnail()).toHaveAttribute('src', 'https://cdn.example/clip.mp4');
+        expect(thumbnail()).toHaveAttribute('preload', 'metadata');
+      });
+
+      it('shows a type icon, not a thumbnail, for media with no image', () => {
+        renderPreview(
+          withMedia({
+            id: 'media-1',
+            mediaType: 'audio',
+            source: 'media-item',
+            thumbnailUrl: null,
+            title: 'Audio tour',
+          }),
+          'en',
+        );
+
+        expect(screen.getByText('Audio tour (audio)')).toBeInTheDocument();
+        expect(thumbnail()).toBeNull();
+        expect(screen.getByTestId('AudiotrackSharpIcon')).toBeInTheDocument();
+      });
+    });
   });
 
   describe('Nested Map point preview', () => {

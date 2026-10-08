@@ -14,8 +14,13 @@ import IconButton from '@mui/material/IconButton';
 import ToggleButton from '@mui/material/ToggleButton';
 import ToggleButtonGroup from '@mui/material/ToggleButtonGroup';
 import ArrowBackIcon from '@mui/icons-material/ArrowBackSharp';
+import AudiotrackIcon from '@mui/icons-material/AudiotrackSharp';
 import EditIcon from '@mui/icons-material/EditSharp';
+import FileIcon from '@mui/icons-material/InsertDriveFileSharp';
+import ImageIcon from '@mui/icons-material/ImageSharp';
 import MapIcon from '@mui/icons-material/MapSharp';
+import MovieIcon from '@mui/icons-material/MovieSharp';
+import PdfIcon from '@mui/icons-material/PictureAsPdfSharp';
 import PreviewIcon from '@mui/icons-material/VisibilitySharp';
 import useMediaQuery from '@mui/material/useMediaQuery';
 import { useTheme } from '@mui/material/styles';
@@ -338,6 +343,75 @@ export const mediaImageUrl = (media: DbfMedia | null | undefined): string | null
   } catch {
     return null;
   }
+};
+
+const EDITOR_THUMBNAIL_SIZE = 64;
+
+const EDITOR_THUMBNAIL_STYLE = {
+  borderRadius: 4,
+  flexShrink: 0,
+  height: EDITOR_THUMBNAIL_SIZE,
+  objectFit: 'cover',
+  width: EDITOR_THUMBNAIL_SIZE,
+} as const;
+
+// The icon for media with no image to show, by Media Item type or else by MIME type.
+const mediaIcon = (media: DbfMedia): ComponentType => {
+  const { mediaType, mime } = media;
+  if (mediaType === 'audio' || mime?.startsWith('audio/')) return AudiotrackIcon;
+  if (mediaType === 'uploaded-video' || mediaType === 'youtube-video' || mime?.startsWith('video/')) return MovieIcon;
+  if (mediaType === 'research-pdf' || mime === 'application/pdf') return PdfIcon;
+  if (media.source !== 'media-item' && !mime) return ImageIcon;
+  return FileIcon;
+};
+
+// The editor preview's media (issue #464): a small thumbnail next to its title, so staff can
+// tell which file is attached without opening it. A video with no thumbnail shows its first
+// frame (`preload="metadata"` loads only enough to draw it); anything else shows a type icon.
+const EditorMedia = ({ media }: { media: DbfMedia }) => {
+  const image = mediaImageUrl(media);
+  const video = !image && media.url && media.mime?.startsWith('video/') ? media.url : null;
+  const Icon = mediaIcon(media);
+  let thumbnail: ReactNode;
+  if (image) {
+    thumbnail = <img alt="" data-testid="poi-preview-media-thumbnail" src={image} style={EDITOR_THUMBNAIL_STYLE} />;
+  } else if (video) {
+    thumbnail = (
+      <video
+        aria-hidden
+        data-testid="poi-preview-media-thumbnail"
+        muted
+        preload="metadata"
+        src={video}
+        style={{ ...EDITOR_THUMBNAIL_STYLE, background: '#000' }}
+      />
+    );
+  } else {
+    thumbnail = (
+      <span
+        aria-hidden
+        style={{
+          ...EDITOR_THUMBNAIL_STYLE,
+          alignItems: 'center',
+          background: 'rgba(0, 0, 0, 0.04)',
+          color: 'rgba(0, 0, 0, 0.54)',
+          display: 'flex',
+          justifyContent: 'center',
+        }}
+      >
+        <Icon />
+      </span>
+    );
+  }
+  return (
+    <figure style={{ alignItems: 'center', display: 'flex', gap: 12, margin: '16px 0 0' }}>
+      {thumbnail}
+      <figcaption style={{ minWidth: 0, overflowWrap: 'anywhere' }}>
+        {media.title}
+        {media.mediaType ? ` (${media.mediaType})` : ''}
+      </figcaption>
+    </figure>
+  );
 };
 
 
@@ -1246,7 +1320,6 @@ const PoiPreviewContent = ({
   const title = annotation ? textBody(annotation, locale, 'identifying') : '';
   const description = annotation ? sanitizeDescription(textBody(annotation, locale, 'describing')) : '';
   const media = annotation ? mediaForLocale(annotation, locale) : null;
-  const image = mediaImageUrl(media);
 
   // The preview panel floats over the map, so the pin it describes may now be behind it. A
   // carried POI's point is on the parent map, not this one.
@@ -1301,15 +1374,7 @@ const PoiPreviewContent = ({
           // eslint-disable-next-line react/no-danger -- descriptionEn/Ar is CKEditor HTML, the same content the public site will eventually render
           <div dangerouslySetInnerHTML={{ __html: description }} />
         )}
-        {media &&
-          (image ? (
-            <img alt={media.title ?? ''} src={image} style={{ maxWidth: '100%' }} />
-          ) : (
-            <p>
-              {media.title}
-              {media.mediaType ? ` (${media.mediaType})` : ''}
-            </p>
-          ))}
+        {media && <EditorMedia media={media} />}
         {linkedMapManifestId && (
           <Button
             onClick={() => dispatchOpenNestedMap(windowId, linkedMapManifestId)}

@@ -105,10 +105,10 @@ export const MAP_VIEWER_LANGUAGES = ['en', 'ar'];
  * annotation (`dbf:linkedMap.manifestId`); `getLinkedMapManifestId` is only needed for
  * annotations that don't carry it, turning their linked map (`{ id }`) into a manifest URL.
  *
- * The mouse wheel tours the map's POIs (in their `dbf:order`, journeys unrolled into their
- * stops) instead of zooming - see mapInteractionPlugin.tsx. Shift+wheel, pinch-to-zoom and
- * the zoom controls still zoom. On a touch screen, a quick horizontal swipe steps through them
- * the same way, while a slower drag still pans.
+ * The mouse wheel, pinch and the zoom controls zoom the map. The map's POIs (in their
+ * `dbf:order`, journeys unrolled into their stops) are toured by scrolling the panel's list,
+ * swiping the mobile sheet, or a quick horizontal swipe on the map, while a slower drag pans -
+ * see mapInteractionPlugin.tsx.
  */
 export function MapViewer({ getLinkedMapManifestId = undefined, lang = 'en', manifestId, site = false }) {
   const baseId = useId().replace(/:/g, '');

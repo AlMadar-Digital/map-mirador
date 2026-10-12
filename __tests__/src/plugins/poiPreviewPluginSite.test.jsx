@@ -49,6 +49,16 @@ describe('poiPreviewPlugin site preset', () => {
       expect(mapStateToProps(state({}), { id: 'cw', windowId: 'window' }).site).toBe(false);
       expect(mapStateToProps(state(undefined), { id: 'cw', windowId: 'window' }).site).toBe(false);
     });
+
+    it("passes the host's initialView to the map it opens, never to a nested map (#504)", () => {
+      const overlayState = poiPreviewPlugins[1].mapStateToProps;
+      const nested = (maps) => ({ ...state(maps), windows: { window: { mapHistory: [{ manifestId: 'parent' }] } } });
+
+      expect(overlayState(state({ initialView: 'halfway', site: true }), { windowId: 'window' }).initialView).toBe('halfway');
+      expect(overlayState(state({ initialView: 'sideways', site: true }), { windowId: 'window' }).initialView).toBe('fill');
+      expect(overlayState(state({ site: true }), { windowId: 'window' }).initialView).toBe('fill');
+      expect(overlayState(nested({ initialView: 'firstPoi', site: true }), { windowId: 'window' }).initialView).toBe('fill');
+    });
   });
 
   describe('journey', () => {

@@ -66,6 +66,15 @@ for the host page to style, so only use it with that CSS in place:
 <MapViewer manifestId={manifestUrl} lang="ar" site />
 ```
 
+With `site`, `initialView` sets how the map opens. `fill` (the default) fills the view with
+every POI in it; `halfway` then zooms halfway in towards the first POI of the tour, and
+`firstPoi` zooms onto it the way the panel focuses on a POI, without selecting it. Only the map
+`MapViewer` opens: a nested map always opens filling the view, as does a map without POIs.
+
+```jsx
+<MapViewer manifestId={manifestUrl} site initialView="halfway" />
+```
+
 ### Mirador
 
 Check the `demo` folder for runnable examples, including `demo/index.html` (raw

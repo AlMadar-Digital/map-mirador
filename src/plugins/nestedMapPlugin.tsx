@@ -87,6 +87,9 @@ export const getLinkedMapManifestId = (state: unknown, linkedMap?: LinkedMap | n
 const getMapHistory = (state: unknown, windowId: string): MapHistoryEntry[] =>
   (getWindow(state, { windowId }) as MiradorWindow | undefined)?.mapHistory ?? [];
 
+/** Whether the window shows a nested map (opened from another map) rather than its own. */
+export const isNestedMap = (state: unknown, windowId: string) => getMapHistory(state, windowId).length > 0;
+
 /** Where the window's current nested map was opened from, if it was opened from a POI. */
 export const getNestedOrigin = (state: unknown, windowId: string): NestedOrigin | null =>
   getMapHistory(state, windowId).at(-1)?.origin ?? null;

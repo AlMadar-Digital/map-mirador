@@ -6,6 +6,7 @@ import { poiPreviewPlugins } from '../plugins/poiPreviewPlugin.tsx';
 import { nestedMapPlugins } from '../plugins/nestedMapPlugin.tsx';
 import { mapInteractionPlugins } from '../plugins/mapInteractionPlugin.tsx';
 import { siteMapToolsPlugins } from '../plugins/siteMapToolsPlugin.tsx';
+import { INITIAL_VIEWS } from '../plugins/fillView.ts';
 
 // Hides Mirador's generic multi-window IIIF-viewer chrome (top bar, workspace controls,
 // canvas panel) so a manifest reads as a single interactive map rather than a document
@@ -109,8 +110,13 @@ export const MAP_VIEWER_LANGUAGES = ['en', 'ar'];
  * `dbf:order`, journeys unrolled into their stops) are toured by scrolling the panel's list,
  * swiping the mobile sheet, or a quick horizontal swipe on the map, while a slower drag pans -
  * see mapInteractionPlugin.tsx.
+ *
+ * With `site`, a map opens filling the view with all its POIs in it (`initialView` 'fill'), or
+ * zooms in from there: halfway towards the first POI of the tour ('halfway') or onto it
+ * ('firstPoi'), without selecting it. Only the map MapViewer opens - a nested map always opens
+ * filling the view - and a map without POIs stays filled. Read when the viewer is created.
  */
-export function MapViewer({ getLinkedMapManifestId = undefined, lang = 'en', manifestId, site = false }) {
+export function MapViewer({ getLinkedMapManifestId = undefined, initialView = 'fill', lang = 'en', manifestId, site = false }) {
   const baseId = useId().replace(/:/g, '');
   const wrapperRef = useRef(null);
   const instanceRef = useRef(null);
@@ -122,6 +128,9 @@ export function MapViewer({ getLinkedMapManifestId = undefined, lang = 'en', man
   // effect below switches the running viewer's language instead, keeping the map's viewport.
   const langRef = useRef(lang);
   langRef.current = lang;
+  // Only matters as the map opens, so a change doesn't rebuild a running viewer either.
+  const initialViewRef = useRef(initialView);
+  initialViewRef.current = initialView;
 
   useEffect(() => {
     const wrapper = wrapperRef.current;
@@ -148,6 +157,7 @@ export function MapViewer({ getLinkedMapManifestId = undefined, lang = 'en', man
           // The site preset: the public site's markup (`.dbf-map-poi*` class contract) rather
           // than Mirador's own; the annotation editor never sets this.
           site,
+          initialView: initialViewRef.current,
           getLinkedMapManifestId: hasLinkedMapResolver
             ? (linkedMap) => getLinkedMapManifestIdRef.current?.(linkedMap)
             : undefined,
@@ -188,6 +198,8 @@ export function MapViewer({ getLinkedMapManifestId = undefined, lang = 'en', man
 MapViewer.propTypes = {
   /** Resolves a Nested Map point's linked map (`{ id, titleEn }`) to its manifest URL, when its annotation has no `dbf:linkedMap.manifestId`. */
   getLinkedMapManifestId: PropTypes.func,
+  /** How the site preset opens the map: filling the view ('fill', the default), zoomed halfway in towards the first POI of the tour ('halfway'), or onto it ('firstPoi'), without selecting it. Only the map MapViewer opens, not nested ones. */
+  initialView: PropTypes.oneOf(INITIAL_VIEWS),
   /** Language of the viewer's UI and of the POI/journey content it previews. */
   lang: PropTypes.oneOf(MAP_VIEWER_LANGUAGES),
   /** URL of the IIIF manifest to render as a map. */

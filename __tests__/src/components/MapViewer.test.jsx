@@ -54,6 +54,20 @@ describe('MapViewer', () => {
     expect(config.window).not.toHaveProperty('defaultSidebarPanelWidth');
   });
 
+  it('opens the map filling the view by default, or as the host asks (#504)', () => {
+    const { unmount } = render(<MapViewer manifestId="https://example.com/manifest.json" site />);
+    expect(viewer.mock.lastCall[0].maps.initialView).toBe('fill');
+    unmount();
+
+    const { rerender } = render(<MapViewer initialView="firstPoi" manifestId="https://example.com/manifest.json" site />);
+    expect(viewer.mock.lastCall[0].maps.initialView).toBe('firstPoi');
+
+    // It only matters as the map opens: a new value doesn't rebuild the running viewer.
+    const calls = viewer.mock.calls.length;
+    rerender(<MapViewer initialView="halfway" manifestId="https://example.com/manifest.json" site />);
+    expect(viewer.mock.calls.length).toBe(calls);
+  });
+
   it('starts Mirador in the given language', () => {
     const { container } = render(<MapViewer lang="ar" manifestId="https://example.com/manifest.json" />);
 

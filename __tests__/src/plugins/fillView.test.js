@@ -1,4 +1,4 @@
-import { fillViewBounds } from '../../../src/plugins/fillView.ts';
+import { fillViewBounds, halfwayZoom, normalizeInitialView } from '../../../src/plugins/fillView.ts';
 
 const image = { height: 1295, width: 1800, x: 0, y: 0 };
 const inView = (view, container, { x, y }) => {
@@ -42,6 +42,21 @@ describe('fillViewBounds', () => {
   });
 });
 
+describe('normalizeInitialView', () => {
+  it('keeps a view it knows and fills for anything else', () => {
+    expect(normalizeInitialView('halfway')).toBe('halfway');
+    expect(normalizeInitialView('firstPoi')).toBe('firstPoi');
+    ['x', undefined, null, 2].forEach((value) => expect(normalizeInitialView(value)).toBe('fill'));
+  });
+});
+
+describe('halfwayZoom', () => {
+  it('is as many zoom steps from one end as from the other', () => {
+    expect(halfwayZoom(1, 4)).toBe(2);
+    expect(halfwayZoom(2, 2)).toBe(2);
+  });
+});
+
 describe('useFillView', () => {
   // A stand-in for the OpenSeadragon viewer: one image, a viewport that remembers its view.
   const fakeViewer = () => {
@@ -62,7 +77,10 @@ describe('useFillView', () => {
         }),
         getCenter: () => view.center,
         getContainerSize: () => ({ x: 1440, y: 900 }),
+        getHomeZoom: () => 1 / 1800,
+        getMaxZoom: () => 1,
         getZoom: () => view.zoom,
+        zoomTo: vi.fn(),
       },
       world: { addHandler: vi.fn(), getItemAt: () => item, removeHandler: vi.fn() },
     };
@@ -120,5 +138,81 @@ describe('useFillView', () => {
       ],
     });
     expect(viewer.viewport.fitBounds).toHaveBeenCalledTimes(2);
+  });
+
+  describe('initialView (#504)', () => {
+    const pois = [
+      { x: 60, y: 60 },
+      { x: 1750, y: 1250 },
+    ];
+    const first = { x: 900, y: 600 };
+
+    const open = async (options) => {
+      const { renderHook } = await import('@testing-library/react');
+      const { useFillView } = await import('../../../src/plugins/fillView.ts');
+      const viewer = fakeViewer();
+      const focusOnPoint = vi.fn();
+      const storeViewport = vi.fn();
+      const props = { enabled: true, focusOnPoint, storeViewport, viewer, ...options };
+      const hook = renderHook((p) => useFillView(p), { initialProps: props });
+      viewer.handlers['tile-loaded']();
+      return { focusOnPoint, hook, props, storeViewport, viewer };
+    };
+
+    it('stays filled by default', async () => {
+      const { focusOnPoint, storeViewport, viewer } = await open({ firstPoint: first, points: pois, windowId: 'iv-fill' });
+
+      expect(viewer.viewport.fitBounds).toHaveBeenCalledTimes(1);
+      expect(storeViewport).toHaveBeenCalledTimes(1);
+      expect(focusOnPoint).not.toHaveBeenCalled();
+      expect(viewer.viewport.zoomTo).not.toHaveBeenCalled();
+    });
+
+    it('focuses on the first POI after filling, without selecting it', async () => {
+      const { focusOnPoint, storeViewport, viewer } = await open({
+        firstPoint: first,
+        initialView: 'firstPoi',
+        points: pois,
+        windowId: 'iv-first',
+      });
+
+      expect(viewer.viewport.fitBounds).toHaveBeenCalledTimes(1);
+      expect(focusOnPoint).toHaveBeenCalledWith(first);
+      // Mirador stores where the zoom ends; storing the fill would pull the map back to it.
+      expect(storeViewport).not.toHaveBeenCalled();
+    });
+
+    it('zooms halfway in from the fill towards the first POI focus', async () => {
+      const { viewer } = await open({ firstPoint: first, initialView: 'halfway', points: pois, windowId: 'iv-half' });
+
+      const fillZoom = viewer.view.zoom;
+      const poiZoom = Math.max(fillZoom, (1 / 1800) * 4);
+      expect(viewer.viewport.zoomTo).toHaveBeenCalledWith(Math.sqrt(fillZoom * poiZoom));
+    });
+
+    it('waits for the POIs before zooming, and leaves a map the visitor has moved', async () => {
+      const { focusOnPoint, hook, props, viewer } = await open({
+        firstPoint: null,
+        initialView: 'firstPoi',
+        points: [],
+        windowId: 'iv-late',
+      });
+      expect(focusOnPoint).not.toHaveBeenCalled();
+
+      hook.rerender({ ...props, firstPoint: first, points: pois });
+      expect(focusOnPoint).toHaveBeenCalledTimes(1);
+
+      viewer.view.center = { x: 1, y: 1 };
+      hook.rerender({ ...props, firstPoint: first, points: [...pois, { x: 10, y: 10 }] });
+      expect(focusOnPoint).toHaveBeenCalledTimes(1);
+    });
+
+    it('fills a map without POIs whatever the host asked', async () => {
+      const { focusOnPoint, viewer } = await open({ firstPoint: null, initialView: 'halfway', points: [], windowId: 'iv-none' });
+
+      expect(viewer.viewport.fitBounds).toHaveBeenCalledTimes(1);
+      expect(viewer.viewport.zoomTo).not.toHaveBeenCalled();
+      expect(focusOnPoint).not.toHaveBeenCalled();
+    });
   });
 });

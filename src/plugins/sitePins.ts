@@ -272,8 +272,9 @@ const cssNumber = (style: CSSStyleDeclaration, name: string) => {
 
 /**
  * The host page's journey line style, from CSS custom properties on (or inherited by) the
- * viewer: `--dbf-map-line` (colour), `--dbf-map-line-width` and `--dbf-map-line-dash` (screen
- * pixels) and `--dbf-map-line-curve: 1` for a smooth curve through the stops. Null when the
+ * viewer: `--dbf-map-line` (colour), `--dbf-map-line-width` (screen pixels),
+ * `--dbf-map-line-dash` (about screen pixels, anchored to the map so it doesn't slide while
+ * zooming) and `--dbf-map-line-curve: 1` for a smooth curve through the stops. Null when the
  * host sets none of them, so the line keeps its authored style.
  */
 export const readLineStyle = (element?: Element | null) => {

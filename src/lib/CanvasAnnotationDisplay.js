@@ -54,14 +54,25 @@ export function poiHitTarget(x, y, zoomRatio) {
   };
 }
 
+/**
+ * The zoom ratio a journey's dash pattern is sized for: the live zoomRatio rounded to the
+ * nearest power of two. Dividing the dash by the live ratio kept it a fixed size on screen while
+ * the line scaled under it, so the dashes slid along the line as the map zoomed. Between
+ * doublings the dashes are now fixed on the map, growing and shrinking with the line; at each
+ * doubling they split (or merge), staying within 1/√2..√2 of the host's length on screen.
+ */
+export const dashZoomRatio = (zoomRatio) =>
+  Number.isFinite(zoomRatio) && zoomRatio > 0 ? 2 ** Math.round(Math.log2(zoomRatio)) : 1;
+
 export default class CanvasAnnotationDisplay {
   /** */
   constructor({ resource, palette, zoomRatio, offset, selected, hovered, journeyStopNumber, lineStyle = null }) {
     this.resource = resource;
     /**
-     * A host's own style for lines (a journey), in screen pixels, applied over the SVG's own
-     * stroke in every state: `{ strokeStyle, lineWidth, lineDash, curve }`. `curve` draws a
-     * straight-segment line as a smooth curve through its points.
+     * A host's own style for lines (a journey), applied over the SVG's own stroke in every
+     * state: `{ strokeStyle, lineWidth, lineDash, curve }`. The width is in screen pixels; the
+     * dash is about that many screen pixels but anchored to the map (see `dashZoomRatio`).
+     * `curve` draws a straight-segment line as a smooth curve through its points.
      */
     this.lineStyle = lineStyle;
     this.journeyStopNumber = journeyStopNumber;
@@ -248,7 +259,10 @@ export default class CanvasAnnotationDisplay {
         const { lineDash, lineWidth, strokeStyle } = lineStyle;
         if (strokeStyle) this.context.strokeStyle = strokeStyle;
         if (lineWidth) this.context.lineWidth = lineWidth / this.zoomRatio;
-        if (lineDash) this.context.setLineDash(lineDash.map((length) => length / this.zoomRatio));
+        if (lineDash) {
+          const dashRatio = dashZoomRatio(this.zoomRatio);
+          this.context.setLineDash(lineDash.map((length) => length / dashRatio));
+        }
       }
 
       this.context.globalAlpha = currentPalette.globalAlpha;

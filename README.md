@@ -67,7 +67,8 @@ for the host page to style, so only use it with that CSS in place:
 ```
 
 With `site`, `initialView` sets how the map opens. `fill` (the default) fills the view with
-every POI in it; `halfway` then zooms halfway in towards the first POI of the tour, and
+every POI in it; `halfway` then moves halfway from there to the `firstPoi` view (half the zoom,
+with the first POI of the tour half way to where `firstPoi` centres it), and
 `firstPoi` zooms onto it the way the panel focuses on a POI, without selecting it. Only the map
 `MapViewer` opens: a nested map always opens filling the view, as does a map without POIs.
 

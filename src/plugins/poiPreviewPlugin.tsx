@@ -78,7 +78,7 @@ import { useSheetGestures } from './sheetGestures';
 import { isRowLayout, useScrollSelect } from './scrollSelect';
 import { AudioPlayer, audioUrl } from './audioPlayer';
 import { getTourPois } from './tourOrder';
-import { normalizeInitialView, useFillView, type InitialView } from './fillView';
+import { halfwayViewBounds, normalizeInitialView, useFillView, type InitialView } from './fillView';
 import { poiFocusZoom } from './focusZoom';
 import { readLineStyle, requestPinFocus, useSitePins, type PinResource } from './sitePins';
 
@@ -568,16 +568,19 @@ export const getVisibleMapArea = (viewer: OsdViewer): PixelRect | null => {
 // `unitsPerPixel` viewport units per screen pixel. OpenSeadragon's own pan/zoom/fit calls all
 // centre on the whole container, which puts the target behind a preview panel, so this builds
 // the matching whole-container bounds itself.
+const visibleAreaCenter = (area: PixelRect): Point => ({ x: area.x + area.width / 2, y: area.y + area.height / 2 });
+
 const showCenteredInVisibleArea = (viewer: OsdViewer, center: Point, unitsPerPixel: number) => {
   const { viewport } = viewer;
   const area = getVisibleMapArea(viewer);
   if (!viewport || !area) return;
   const size = viewport.getContainerSize();
+  const middle = visibleAreaCenter(area);
 
   viewport.fitBounds(
     new OpenSeadragon.Rect(
-      center.x - (area.x + area.width / 2) * unitsPerPixel,
-      center.y - (area.y + area.height / 2) * unitsPerPixel,
+      center.x - middle.x * unitsPerPixel,
+      center.y - middle.y * unitsPerPixel,
       size.x * unitsPerPixel,
       size.y * unitsPerPixel
     )
@@ -596,6 +599,25 @@ const focusMapOnPointNow = (windowId: string, point: Point) => {
   if (!viewer || !viewport) return;
 
   showCenteredInVisibleArea(viewer, point, unitsPerPixelAtZoom(viewport, poiFocusZoom(viewport)));
+};
+
+// Moves the map halfway from where it is to a focus on a point (MapViewer's `initialView`
+// 'halfway', #504): halfway in zoom, and the point halfway to the middle of the visible area.
+const zoomMapHalfwayToPointNow = (windowId: string, point: Point) => {
+  const viewer = getOsdViewer(windowId);
+  const viewport = viewer?.viewport;
+  const area = viewer ? getVisibleMapArea(viewer) : null;
+  if (!viewport || !area) return;
+
+  const bounds = halfwayViewBounds({
+    container: viewport.getContainerSize(),
+    fillPixel: viewport.pixelFromPoint(new OpenSeadragon.Point(point.x, point.y), true),
+    fillZoom: viewport.getZoom(true),
+    focusPixel: visibleAreaCenter(area),
+    focusZoom: poiFocusZoom(viewport),
+    point,
+  });
+  viewport.fitBounds(new OpenSeadragon.Rect(bounds.x, bounds.y, bounds.width, bounds.height));
 };
 
 // Pans the map just enough to bring a point out from under a companion window (or back from
@@ -662,6 +684,7 @@ const whenOverlaysSettle =
   };
 
 export const focusMapOnPoint = whenOverlaysSettle(focusMapOnPointNow);
+export const zoomMapHalfwayToPoint = whenOverlaysSettle(zoomMapHalfwayToPointNow);
 export const ensurePointVisible = whenOverlaysSettle(ensurePointVisibleNow);
 export const fitMapToPoints = whenOverlaysSettle(fitMapToPointsNow);
 
@@ -1879,6 +1902,7 @@ const AnnotationsOverlayPoiClickWrapper = ({
     enabled: site,
     firstPoint: firstPin ? pinPoint(firstPin) : null,
     focusOnPoint: (point) => focusMapOnPoint(targetProps.windowId, point),
+    halfwayToPoint: (point) => zoomMapHalfwayToPoint(targetProps.windowId, point),
     initialView,
     points: fillPoints,
     storeViewport: dispatchUpdateViewport,

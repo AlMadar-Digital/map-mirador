@@ -1,6 +1,5 @@
 import { useEffect, useRef } from 'react';
 import OpenSeadragon from 'openseadragon';
-import { poiFocusZoom } from './focusZoom';
 import { hasPendingParentViewport } from './nestedMapPlugin';
 
 // The site preset opens a map filling the view (Figma's Explore frames) rather than showing the
@@ -9,9 +8,9 @@ import { hasPendingParentViewport } from './nestedMapPlugin';
 // (which runs on the first tile, see OpenSeadragonComponent); Back restores the parent's view
 // instead.
 //
-// A host can then have it zoom in from there (MapViewer's `initialView`, #504): halfway towards
-// the first POI of the tour, or onto it, the way the panel focuses on a POI. The zoom animates
-// from the fill, and leaves the panel as it is: it doesn't select the POI.
+// A host can then have it zoom in from there (MapViewer's `initialView`, #504): onto the first
+// POI of the tour, the way the panel focuses on a POI, or halfway there (`halfwayViewBounds`).
+// The zoom animates from the fill, and leaves the panel as it is: it doesn't select the POI.
 
 type Point = { x: number; y: number };
 type Rect = { x: number; y: number; width: number; height: number };
@@ -29,6 +28,38 @@ export const normalizeInitialView = (value: unknown): InitialView =>
  * from the other - zoom is multiplicative, so the arithmetic midpoint would lean towards the POI.
  */
 export const halfwayZoom = (fromZoom: number, toZoom: number) => Math.sqrt(fromZoom * toZoom);
+
+interface HalfwayViewInput {
+  // Container size, in screen pixels.
+  container: Point;
+  // Where the fill shows the POI, and where a focus on it would put it (the middle of the part of
+  // the map no panel covers), both in container pixels.
+  fillPixel: Point;
+  focusPixel: Point;
+  // The fill's zoom and the focus zoom.
+  fillZoom: number;
+  focusZoom: number;
+  // The POI, in viewport (canvas) units.
+  point: Point;
+}
+
+/**
+ * The view (in viewport units) halfway from the fill to a focus on `point`: zoomed in to
+ * `halfwayZoom`, with the POI moved halfway from where the fill shows it to where the focus would
+ * put it. Both of those are on screen, so the POI is too - zooming around the fill's own centre
+ * instead could push a POI near the edge out of view (#504).
+ */
+export const halfwayViewBounds = ({ container, fillPixel, fillZoom, focusPixel, focusZoom, point }: HalfwayViewInput): Rect => {
+  // OpenSeadragon's zoom is the inverse of the viewport's width in viewport units.
+  const unitsPerPixel = 1 / (halfwayZoom(fillZoom, focusZoom) * container.x);
+  const pixel = { x: (fillPixel.x + focusPixel.x) / 2, y: (fillPixel.y + focusPixel.y) / 2 };
+  return {
+    height: container.y * unitsPerPixel,
+    width: container.x * unitsPerPixel,
+    x: point.x - pixel.x * unitsPerPixel,
+    y: point.y - pixel.y * unitsPerPixel,
+  };
+};
 
 // Room kept around the outermost POIs, in screen pixels: a pin's own height above its point,
 // plus a margin, so no pin is cut by the edge.
@@ -82,10 +113,7 @@ type Viewer = {
     fitBounds: (rect: OpenSeadragon.Rect, immediately?: boolean) => void;
     getCenter: (current?: boolean) => Point;
     getContainerSize: () => Point;
-    getHomeZoom: () => number;
-    getMaxZoom: () => number;
     getZoom: (current?: boolean) => number;
-    zoomTo: (zoom: number, refPoint?: unknown, immediately?: boolean) => void;
   };
   world: {
     addHandler: (name: string, handler: () => void) => void;
@@ -105,6 +133,8 @@ interface UseFillViewOptions {
   firstPoint?: Point | null;
   // Focuses the map on a point the way the panel does (poiPreviewPlugin's focusMapOnPoint).
   focusOnPoint?: (point: Point) => void;
+  // Moves the map halfway from the fill to that focus (poiPreviewPlugin's zoomMapHalfwayToPoint).
+  halfwayToPoint?: (point: Point) => void;
   // Where the map ends up once it fills the view; 'fill' (stay) unless the host chose otherwise.
   initialView?: InitialView;
   // The POIs' points in viewport (canvas) units.
@@ -119,6 +149,7 @@ export const useFillView = ({
   enabled,
   firstPoint = null,
   focusOnPoint,
+  halfwayToPoint,
   initialView = 'fill',
   points,
   storeViewport,
@@ -126,9 +157,9 @@ export const useFillView = ({
   windowId,
 }: UseFillViewOptions) => {
   // Read when the image's first tile is in, which can be after these last changed.
-  const latest = useRef({ firstPoint, focusOnPoint, initialView, points });
+  const latest = useRef({ firstPoint, focusOnPoint, halfwayToPoint, initialView, points });
   useEffect(() => {
-    latest.current = { firstPoint, focusOnPoint, initialView, points };
+    latest.current = { firstPoint, focusOnPoint, halfwayToPoint, initialView, points };
   });
 
   // Fills the view with an image, framing the current POIs, then zooms in as the host asked.
@@ -148,11 +179,8 @@ export const useFillView = ({
     }
     // The zoom animates on from the fill, and Mirador stores where it ends. The fill isn't stored:
     // Mirador moves the viewer back to a stored view that differs from where it is heading.
-    if (current.initialView === 'firstPoi') {
-      current.focusOnPoint?.(current.firstPoint);
-      return;
-    }
-    target.viewport.zoomTo(halfwayZoom(zoom, poiFocusZoom(target.viewport)));
+    if (current.initialView === 'firstPoi') current.focusOnPoint?.(current.firstPoint);
+    else current.halfwayToPoint?.(current.firstPoint);
   };
 
   useEffect(() => {

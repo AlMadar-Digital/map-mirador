@@ -1,4 +1,4 @@
-import CanvasAnnotationDisplay from '../../../src/lib/CanvasAnnotationDisplay';
+import CanvasAnnotationDisplay, { dashZoomRatio } from '../../../src/lib/CanvasAnnotationDisplay';
 import AnnotationResource from '../../../src/lib/AnnotationResource';
 import dualStrategyAnno from '../../fixtures/version-2/annotationMiradorDual.json';
 
@@ -140,7 +140,66 @@ describe('CanvasAnnotationDisplay', () => {
       expect(subject.parseOpacity(0.5)).toEqual(0.5);
     });
   });
+  describe('dashZoomRatio', () => {
+    it('rounds the zoom ratio to the nearest power of two', () => {
+      expect(dashZoomRatio(0.5)).toEqual(0.5);
+      expect(dashZoomRatio(0.6)).toEqual(0.5);
+      expect(dashZoomRatio(0.75)).toEqual(1);
+      expect(dashZoomRatio(1.3)).toEqual(1);
+      expect(dashZoomRatio(1.5)).toEqual(2);
+    });
+
+    it('falls back to 1 for a zoom ratio it cannot use', () => {
+      [0, -1, NaN, Infinity, undefined].forEach((zoomRatio) => expect(dashZoomRatio(zoomRatio)).toEqual(1));
+    });
+
+    it('keeps a dash within 1/√2..√2 of its screen length at any zoom', () => {
+      for (let zoomRatio = 0.01; zoomRatio < 8; zoomRatio *= 1.07) {
+        const onScreen = (10 / dashZoomRatio(zoomRatio)) * zoomRatio;
+        expect(onScreen).toBeGreaterThanOrEqual(10 / Math.SQRT2 - 1e-9);
+        expect(onScreen).toBeLessThanOrEqual(10 * Math.SQRT2 + 1e-9);
+      }
+    });
+  });
+
   describe('svgContext', () => {
+    const journeyAt = (zoomRatio) => {
+      const context = createMockContext();
+      const subject = createSubject({
+        lineStyle: { lineDash: [6, 4], lineWidth: 2 },
+        resource: new AnnotationResource({
+          'dbf:kind': 'Journey',
+          motivation: ['oa:commenting'],
+          on: {
+            selector: {
+              item: {
+                '@type': 'oa:SvgSelector',
+                value: "<svg xmlns='http://www.w3.org/2000/svg'><path d='M0,0 L10,10' stroke='#00bfff' /></svg>",
+              },
+            },
+          },
+        }),
+        zoomRatio,
+      });
+      subject.context = context;
+      subject.svgContext();
+      return context;
+    };
+
+    it("keeps a journey's dashes fixed on the map while zooming between doublings", () => {
+      const before = journeyAt(0.55);
+      const after = journeyAt(0.65);
+      expect(before.setLineDash).toHaveBeenLastCalledWith([12, 8]);
+      expect(after.setLineDash).toHaveBeenLastCalledWith([12, 8]);
+      // The line itself stays the same width on screen.
+      expect(before.lineWidth).toBeCloseTo(2 / 0.55);
+      expect(after.lineWidth).toBeCloseTo(2 / 0.65);
+    });
+
+    it('halves the dash on the map at the next doubling', () => {
+      expect(journeyAt(0.75).setLineDash).toHaveBeenLastCalledWith([6, 4]);
+    });
+
     it("applies a host's line style to journeys only, in every state", () => {
       const lineStyle = { lineDash: [6, 4], lineWidth: 2, strokeStyle: '#0000ff' };
       const shape = (extra) =>

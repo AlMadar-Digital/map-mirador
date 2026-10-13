@@ -5,6 +5,7 @@ import {
   getTourSteps,
   mapInteractionPlugins,
 } from '../../../src/plugins/mapInteractionPlugin.tsx';
+import { stepTour } from '../../../src/plugins/sitePanelState.ts';
 
 const at = (x, y) => ({ selector: [{ type: 'PointSelector', x, y }], source: 'canvas' });
 
@@ -102,48 +103,21 @@ describe('getSwipeDirection', () => {
   });
 });
 
-describe('mapInteractionPlugin wheel handling', () => {
+describe('mapInteractionPlugin tour', () => {
   const [{ component: Wrapper }] = mapInteractionPlugins;
-  let handler;
   let props;
-  let now;
 
-  /** A stand-in OSD viewer keeping hold of its canvas-scroll handler */
+  /** A stand-in OSD viewer keeping hold of its handlers */
   let handlers;
   const viewer = {
     addHandler: (name, fn) => {
       handlers[name] = fn;
-      if (name === 'canvas-scroll') handler = fn;
     },
     removeHandler: vi.fn(),
-    viewport: {
-      applyConstraints: vi.fn(),
-      pointFromPixel: ({ x, y }) => ({ viewportX: x, viewportY: y }),
-      zoomBy: vi.fn(),
-    },
-    zoomPerScroll: 2,
-  };
-
-  /**
-   * Fires a canvas-scroll event, returning it. `amount` is OpenSeadragon's scroll direction
-   * (positive for a wheel pushed away); the DOM event's deltaY is its opposite unless given.
-   */
-  const scroll = (amount, { ctrlKey = false, shiftKey = false, deltaX = 0, deltaY = -amount, after = 1000 } = {}) => {
-    now += after;
-    const event = {
-      originalEvent: { ctrlKey, deltaX, deltaY, shiftKey },
-      position: { x: 10, y: 20 },
-      preventDefaultAction: false,
-      scroll: amount,
-    };
-    handler(event);
-    return event;
   };
 
   beforeEach(() => {
     handlers = {};
-    now = 0;
-    vi.spyOn(Date, 'now').mockImplementation(() => now);
     vi.spyOn(window, 'requestAnimationFrame').mockImplementation(() => 0);
     props = {
       addCompanionWindow: vi.fn(),
@@ -160,12 +134,17 @@ describe('mapInteractionPlugin wheel handling', () => {
     vi.clearAllMocks();
   });
 
-  it('opens the first POI on the first scroll instead of zooming', () => {
+  it('leaves the mouse wheel zooming the map (#504)', () => {
     render(<Wrapper {...props} />);
 
-    const event = scroll(-1);
+    expect(handlers['canvas-scroll']).toBeUndefined();
+  });
 
-    expect(event.preventDefaultAction).toBe(true);
+  it('opens the first POI on the first step', () => {
+    render(<Wrapper {...props} />);
+
+    stepTour('window', 1);
+
     expect(props.selectAnnotation).toHaveBeenCalledWith('window', 'first');
     expect(props.addCompanionWindow).toHaveBeenCalledWith(
       'window',
@@ -176,65 +155,26 @@ describe('mapInteractionPlugin wheel handling', () => {
   it("moves on through a journey's stops in its own preview", () => {
     render(<Wrapper {...props} existingPreviewCompanionWindowId="cw" selectedAnnotationId="first" />);
 
-    scroll(-1);
+    stepTour('window', 1);
 
     expect(props.selectAnnotation).toHaveBeenCalledWith('window', 'cairo');
     expect(props.updateCompanionWindow).toHaveBeenCalledWith('window', 'cw', expect.objectContaining({ annotationid: 'nile' }));
   });
 
-  it('scrolling up goes back', () => {
+  it('steps back', () => {
     render(<Wrapper {...props} existingPreviewCompanionWindowId="cw" selectedAnnotationId="aswan" />);
 
-    scroll(1);
+    stepTour('window', -1);
 
     expect(props.selectAnnotation).toHaveBeenCalledWith('window', 'cairo');
   });
 
-  it('moves one step per wheel gesture', () => {
-    render(<Wrapper {...props} />);
+  it('stops stepping once unmounted', () => {
+    const { unmount } = render(<Wrapper {...props} />);
+    unmount();
 
-    scroll(-1);
-    scroll(-1, { after: 50 });
-    scroll(-1, { after: 50 });
+    stepTour('window', 1);
 
-    expect(props.selectAnnotation).toHaveBeenCalledTimes(1);
-  });
-
-  it('leaves a pinch (ctrl+wheel) zooming the map', () => {
-    render(<Wrapper {...props} />);
-
-    const event = scroll(-1, { ctrlKey: true });
-
-    expect(event.preventDefaultAction).toBe(false);
-    expect(props.selectAnnotation).not.toHaveBeenCalled();
-  });
-
-  it('zooms around the pointer on shift+wheel instead of touring', () => {
-    render(<Wrapper {...props} />);
-
-    const event = scroll(1, { shiftKey: true });
-    scroll(-1, { after: 10, shiftKey: true });
-
-    expect(event.preventDefaultAction).toBe(true);
-    expect(viewer.viewport.zoomBy).toHaveBeenNthCalledWith(1, 2, { viewportX: 10, viewportY: 20 });
-    expect(viewer.viewport.zoomBy).toHaveBeenNthCalledWith(2, 0.5, expect.anything());
-    expect(props.selectAnnotation).not.toHaveBeenCalled();
-  });
-
-  it('zooms on shift+wheel when the browser turns it into a horizontal scroll', () => {
-    render(<Wrapper {...props} />);
-
-    scroll(0, { deltaX: -100, deltaY: 0, shiftKey: true });
-
-    expect(viewer.viewport.zoomBy).toHaveBeenCalledWith(2, expect.anything());
-  });
-
-  it('ignores a sideways-only swipe', () => {
-    render(<Wrapper {...props} />);
-
-    const event = scroll(0, { deltaX: 100, deltaY: 0 });
-
-    expect(event.preventDefaultAction).toBe(true);
     expect(props.selectAnnotation).not.toHaveBeenCalled();
   });
 

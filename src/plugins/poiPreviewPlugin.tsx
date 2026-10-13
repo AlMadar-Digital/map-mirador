@@ -51,6 +51,7 @@ import {
   getLinkedMapManifestId,
   getLinkedMapResolver,
   getNestedOrigin,
+  isNestedMap,
   openNestedMap,
   resolveLinkedMapManifestId,
   useRestoreParentViewport,
@@ -77,7 +78,8 @@ import { useSheetGestures } from './sheetGestures';
 import { isRowLayout, useScrollSelect } from './scrollSelect';
 import { AudioPlayer, audioUrl } from './audioPlayer';
 import { getTourPois } from './tourOrder';
-import { useFillView } from './fillView';
+import { halfwayViewBounds, normalizeInitialView, useFillView, type InitialView } from './fillView';
+import { poiFocusZoom } from './focusZoom';
 import { readLineStyle, requestPinFocus, useSitePins, type PinResource } from './sitePins';
 
 export { MAP_INFO_ID, NESTED_ORIGIN_ID, POI_PREVIEW_CONTENT_ID };
@@ -457,10 +459,6 @@ export const getPoiPoint = (poi: RawAnnotation): Point | null => {
   return { x: selector.x, y: selector.y };
 };
 
-// How far "focus on this stop" zooms in, relative to the whole-map (home) zoom - a ratio
-// rather than an absolute zoom, since Mirador's viewport is in canvas pixels so absolute
-// zoom levels differ from one map to another.
-const POI_FOCUS_ZOOM_RATIO = 4;
 // Margin kept around a journey's stops when fitting them all in view, as a fraction of the
 // stops' own bounding box (with a floor for journeys whose stops are almost on top of each other).
 const JOURNEY_FIT_PADDING_RATIO = 0.2;
@@ -570,16 +568,19 @@ export const getVisibleMapArea = (viewer: OsdViewer): PixelRect | null => {
 // `unitsPerPixel` viewport units per screen pixel. OpenSeadragon's own pan/zoom/fit calls all
 // centre on the whole container, which puts the target behind a preview panel, so this builds
 // the matching whole-container bounds itself.
+const visibleAreaCenter = (area: PixelRect): Point => ({ x: area.x + area.width / 2, y: area.y + area.height / 2 });
+
 const showCenteredInVisibleArea = (viewer: OsdViewer, center: Point, unitsPerPixel: number) => {
   const { viewport } = viewer;
   const area = getVisibleMapArea(viewer);
   if (!viewport || !area) return;
   const size = viewport.getContainerSize();
+  const middle = visibleAreaCenter(area);
 
   viewport.fitBounds(
     new OpenSeadragon.Rect(
-      center.x - (area.x + area.width / 2) * unitsPerPixel,
-      center.y - (area.y + area.height / 2) * unitsPerPixel,
+      center.x - middle.x * unitsPerPixel,
+      center.y - middle.y * unitsPerPixel,
       size.x * unitsPerPixel,
       size.y * unitsPerPixel
     )
@@ -597,11 +598,26 @@ const focusMapOnPointNow = (windowId: string, point: Point) => {
   const viewport = viewer?.viewport;
   if (!viewer || !viewport) return;
 
-  const zoom = Math.min(
-    viewport.getMaxZoom(),
-    Math.max(viewport.getZoom(), viewport.getHomeZoom() * POI_FOCUS_ZOOM_RATIO)
-  );
-  showCenteredInVisibleArea(viewer, point, unitsPerPixelAtZoom(viewport, zoom));
+  showCenteredInVisibleArea(viewer, point, unitsPerPixelAtZoom(viewport, poiFocusZoom(viewport)));
+};
+
+// Moves the map halfway from where it is to a focus on a point (MapViewer's `initialView`
+// 'halfway', #504): halfway in zoom, and the point halfway to the middle of the visible area.
+const zoomMapHalfwayToPointNow = (windowId: string, point: Point) => {
+  const viewer = getOsdViewer(windowId);
+  const viewport = viewer?.viewport;
+  const area = viewer ? getVisibleMapArea(viewer) : null;
+  if (!viewport || !area) return;
+
+  const bounds = halfwayViewBounds({
+    container: viewport.getContainerSize(),
+    fillPixel: viewport.pixelFromPoint(new OpenSeadragon.Point(point.x, point.y), true),
+    fillZoom: viewport.getZoom(true),
+    focusPixel: visibleAreaCenter(area),
+    focusZoom: poiFocusZoom(viewport),
+    point,
+  });
+  viewport.fitBounds(new OpenSeadragon.Rect(bounds.x, bounds.y, bounds.width, bounds.height));
 };
 
 // Pans the map just enough to bring a point out from under a companion window (or back from
@@ -668,6 +684,7 @@ const whenOverlaysSettle =
   };
 
 export const focusMapOnPoint = whenOverlaysSettle(focusMapOnPointNow);
+export const zoomMapHalfwayToPoint = whenOverlaysSettle(zoomMapHalfwayToPointNow);
 export const ensurePointVisible = whenOverlaysSettle(ensurePointVisibleNow);
 export const fitMapToPoints = whenOverlaysSettle(fitMapToPointsNow);
 
@@ -1730,6 +1747,7 @@ interface AnnotationsOverlayPoiClickWrapperProps {
   updateCompanionWindow: typeof updateCompanionWindow;
   annotationPages?: AnnotationPages;
   existingPreviewCompanionWindowId?: string;
+  initialView?: InitialView;
   linkedMapResolver?: LinkedMapManifestResolver | null;
   locale?: ContentLocale;
   openNestedMap?: OpenNestedMap;
@@ -1776,6 +1794,7 @@ const AnnotationsOverlayPoiClickWrapper = ({
   updateCompanionWindow: dispatchUpdateCompanionWindow,
   annotationPages,
   existingPreviewCompanionWindowId,
+  initialView = 'fill',
   linkedMapResolver = null,
   locale = 'en',
   openNestedMap: dispatchOpenNestedMap,
@@ -1869,14 +1888,22 @@ const AnnotationsOverlayPoiClickWrapper = ({
   // Only POIs on a canvas the viewer shows: while another map loads (a nested map, Back), the
   // annotations can arrive before their canvas, which has no position yet.
   const shownCanvases = targetProps.canvasWorld?.canvases;
-  const fillPoints = pinResources
-    .filter(({ targetId }) => !shownCanvases || shownCanvases.some((canvas) => canvas.id === targetId))
-    .map(({ pointSelector, targetId }) => {
-      const offset = targetProps.canvasWorld?.offsetByCanvas?.(targetId) ?? { x: 0, y: 0 };
-      return { x: pointSelector.x + offset.x, y: pointSelector.y + offset.y };
-    });
+  const shownPins = pinResources.filter(
+    ({ targetId }) => !shownCanvases || shownCanvases.some((canvas) => canvas.id === targetId)
+  );
+  const pinPoint = ({ pointSelector, targetId }: PinResource) => {
+    const offset = targetProps.canvasWorld?.offsetByCanvas?.(targetId) ?? { x: 0, y: 0 };
+    return { x: pointSelector.x + offset.x, y: pointSelector.y + offset.y };
+  };
+  const fillPoints = shownPins.map(pinPoint);
+  // The first POI of the tour with a pin on the map, for a host's opening zoom (#504).
+  const firstPin = tourOrder.map((id) => shownPins.find((pin) => pin.id === id)).find(Boolean);
   useFillView({
     enabled: site,
+    firstPoint: firstPin ? pinPoint(firstPin) : null,
+    focusOnPoint: (point) => focusMapOnPoint(targetProps.windowId, point),
+    halfwayToPoint: (point) => zoomMapHalfwayToPoint(targetProps.windowId, point),
+    initialView,
     points: fillPoints,
     storeViewport: dispatchUpdateViewport,
     viewer: targetProps.viewer as Parameters<typeof useFillView>[0]['viewer'],
@@ -1916,6 +1943,11 @@ const poiPreviewClickPlugin = {
       (getCompanionWindow(state, { companionWindowId: getPreviewCompanionWindowId(state, windowId) }) as
         | { annotationid?: string }
         | undefined)?.annotationid === MAP_INFO_ID,
+    // Only the map MapViewer opens: a nested map is entered from a POI the panel describes, so it
+    // opens filling the view rather than flying off to a POI of its own.
+    initialView: isNestedMap(state, windowId)
+      ? 'fill'
+      : normalizeInitialView((getConfig(state) as { maps?: { initialView?: unknown } }).maps?.initialView),
     locale: getContentLocale((getConfig(state) as { language?: string }).language),
     site: (getConfig(state) as { maps?: { site?: boolean } }).maps?.site === true,
   }),

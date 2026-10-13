@@ -20,14 +20,15 @@ import {
 import { registerTourStepper } from './sitePanelState';
 import { getTourPois, type OrderedAnnotation } from './tourOrder';
 
-// Map "tour" interactions for MapViewer's rendering mode (issue #434): the mouse wheel steps
-// through the map's POIs one at a time instead of zooming - each step selects the POI, opens
-// its preview (its journey's, with it selected, for a journey stop) and focuses the map on it.
-// Shift+wheel zooms instead, as does a trackpad pinch. On a touch screen, a quick horizontal
-// swipe does the same as a wheel notch - towards the next POI like turning a page (swiping
-// left, or right in a right-to-left layout) - while a slower drag still pans the map.
-// Only for the public viewer: in the Strapi editor the wheel has to keep zooming, so this
-// isn't part of poiPreviewPlugins, and MapViewer registers it on its own.
+// Map "tour" interactions for MapViewer's rendering mode (issue #434): stepping through the
+// map's POIs one at a time - each step selects the POI, opens its preview (its journey's, with
+// it selected, for a journey stop) and focuses the map on it. On a touch screen a quick
+// horizontal swipe steps - towards the next POI like turning a page (swiping left, or right in a
+// right-to-left layout) - while a slower drag still pans the map; the mobile sheet's swipe steps
+// through `registerTourStepper`. The mouse wheel zooms the map, as in plain OpenSeadragon: the
+// tour follows the wheel only in the side panel (scrollSelect.ts), not over the map (#504).
+// Only for the public viewer: the Strapi editor has no tour, so this isn't part of
+// poiPreviewPlugins, and MapViewer registers it on its own.
 
 export type TourStep = { poiId: string; previewId: string; point: { x: number; y: number } };
 
@@ -42,7 +43,7 @@ export const getTourSteps = (items: OrderedAnnotation[]): TourStep[] => {
     });
 };
 
-// The step a wheel notch leads to from the selected annotation: the first POI when none of the
+// The step a tour step leads to from the selected annotation: the first POI when none of the
 // tour's is selected yet, otherwise the next (`direction` 1) or previous (-1) one, stopping at
 // either end. `null` when there's nowhere to go.
 export const getNextTourStep = (
@@ -57,16 +58,6 @@ export const getNextTourStep = (
   return next === current ? null : steps[next];
 };
 
-// A trackpad fires a long stream of wheel events per swipe (inertia included), a mouse wheel
-// one per notch: a pause this long ends a gesture, and each gesture moves one step.
-const WHEEL_GESTURE_GAP_MS = 250;
-
-type CanvasScrollEvent = {
-  originalEvent?: WheelEvent;
-  position?: { x: number; y: number };
-  preventDefaultAction?: boolean;
-  scroll: number;
-};
 type CanvasPressEvent = { pointerType?: string };
 type CanvasDragEvent = {
   delta: { x: number; y: number };
@@ -83,12 +74,6 @@ type OsdHandler = (event: never) => void;
 type OsdViewerLike = {
   addHandler: (name: string, handler: OsdHandler) => void;
   removeHandler: (name: string, handler: OsdHandler) => void;
-  viewport?: {
-    applyConstraints: () => void;
-    pointFromPixel: (pixel: { x: number; y: number }, current?: boolean) => unknown;
-    zoomBy: (factor: number, refPoint?: unknown) => void;
-  };
-  zoomPerScroll?: number;
 };
 
 // A touch drag counts as a swipe - a tour step rather than a pan - when it ends at least this
@@ -115,22 +100,6 @@ export const getSwipeDirection = (
   return towardsNext ? 1 : -1;
 };
 
-// OpenSeadragon's own default zoom step per wheel notch, for a viewer that doesn't say.
-const DEFAULT_ZOOM_PER_SCROLL = 1.2;
-
-// Shift+wheel zooms around the pointer, the way the wheel alone does in plain OpenSeadragon.
-// Done here rather than left to OpenSeadragon, which reads only a wheel event's vertical delta:
-// Chrome and Edge (outside macOS) turn a shift+wheel into a horizontal scroll, which
-// OpenSeadragon would see as no scroll at all.
-const zoomAtPointer = (viewer: OsdViewerLike, event: CanvasScrollEvent) => {
-  const { viewport } = viewer;
-  const delta = event.originalEvent ? event.originalEvent.deltaY || event.originalEvent.deltaX : -event.scroll;
-  if (!viewport || !delta) return;
-  const factor = (viewer.zoomPerScroll ?? DEFAULT_ZOOM_PER_SCROLL) ** (delta < 0 ? 1 : -1);
-  viewport.zoomBy(factor, event.position ? viewport.pointFromPixel(event.position, true) : undefined);
-  viewport.applyConstraints();
-};
-
 interface MapTourControllerProps {
   viewer?: OsdViewerLike | null;
   windowId: string;
@@ -143,7 +112,7 @@ interface MapTourControllerProps {
 }
 
 // Renders nothing: added to OpenSeadragonViewer, which hands its plugins the window's
-// OpenSeadragon viewer, it takes over that viewer's wheel and touch-swipe handling. An `add`
+// OpenSeadragon viewer, it takes over that viewer's touch-swipe handling. An `add`
 // plugin rather than a wrapper of AnnotationsOverlay (which also gets the viewer), because
 // Mirador doesn't chain wrappers of one component: each is handed the bare component, so
 // poiPreviewPlugins' own AnnotationsOverlay wrapper would keep this one from ever rendering.
@@ -184,7 +153,6 @@ const MapTourController = ({
 
   useEffect(() => {
     if (!viewer) return undefined;
-    let lastWheelAt = -Infinity;
     // The current touch gesture: how far it has dragged, and whether a second finger made it a pinch.
     let touchTravel = { x: 0, y: 0 };
     let isPinch = false;
@@ -206,27 +174,6 @@ const MapTourController = ({
       );
       // Once the preview has rendered, so the focus frames the POI beside it rather than under it.
       requestAnimationFrame(() => requestAnimationFrame(() => focusMapOnPoint(windowId, step.point)));
-    };
-
-    const onCanvasScroll = (event: CanvasScrollEvent) => {
-      // Browsers report a trackpad pinch as a ctrl+wheel: leave it zooming the map.
-      if (event.originalEvent?.ctrlKey) return;
-      // eslint-disable-next-line no-param-reassign -- OpenSeadragon's own opt-out of its scroll-to-zoom
-      event.preventDefaultAction = true;
-      if (event.originalEvent?.shiftKey) {
-        zoomAtPointer(viewer, event);
-        return;
-      }
-      // A sideways-only swipe (a trackpad's horizontal scroll) has no direction to tour in.
-      if (!event.scroll) return;
-
-      const now = Date.now();
-      const isNewGesture = now - lastWheelAt > WHEEL_GESTURE_GAP_MS;
-      lastWheelAt = now;
-      if (!isNewGesture) return;
-
-      // OpenSeadragon's `scroll` is positive for a wheel pushed away (up): back through the tour.
-      goToStep(event.scroll > 0 ? -1 : 1);
     };
 
     const onCanvasPress = (event: CanvasPressEvent) => {
@@ -254,7 +201,6 @@ const MapTourController = ({
     const unregisterStepper = registerTourStepper(windowId, goToStep);
 
     const handlers: [string, OsdHandler][] = [
-      ['canvas-scroll', onCanvasScroll],
       ['canvas-press', onCanvasPress],
       ['canvas-drag', onCanvasDrag],
       ['canvas-pinch', onCanvasPinch],

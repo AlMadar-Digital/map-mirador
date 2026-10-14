@@ -5,12 +5,21 @@ import { useEffect, useRef, type RefObject } from 'react';
 // host lays the cards out side by side, the card swiped into view. Only the visitor's own
 // scrolling counts - not the panel scrolling itself to a stop picked on the map - and a stop is
 // picked once the scroll settles, so the map isn't dragged through every card on the way.
+//
+// In a column the list also snaps as the scroll settles: the nearest card's top (or the start of
+// the list) glides up to the top of the panel and that stop is selected, so the card being read
+// and the active pin on the map match. A card taller than the panel is snapped to only as its top
+// comes in - once its top is above, the visitor is reading it - and nothing further than
+// `SNAP_REACH` of the panel away is pulled in. The phone carousel snaps by the host's own CSS.
 
 // How long the list has to be still for a scroll to count as settled (ms).
 export const SCROLL_SETTLE_MS = 150;
 // On a vertical list, a card is reached once its top passes this far down the visible part of
 // the panel (below the host's `scroll-margin-top`).
 const REACHED_AT = 0.3;
+// How far a card's top can be from the top of the panel, as a share of its visible height, for a
+// settled scroll to snap to it.
+export const SNAP_REACH = 0.5;
 
 /**
  * Whether the host lays the list out side by side (the phone carousel) rather than in a column.
@@ -59,6 +68,42 @@ export const pickCardInView = (cards: HTMLElement[], scroller: HTMLElement, row:
   return cards.filter((card) => card.getBoundingClientRect().top <= line).pop() ?? cards[0];
 };
 
+/** Where a settled column snaps: a card's top, or the start of the list (`card` null). */
+export type SnapTarget = { card: HTMLElement | null; offset: number };
+
+/**
+ * The snap point nearest the top of the panel (below the host's `scroll-margin-top`), and how far
+ * the list has to scroll to bring it there. Null when none is within reach.
+ */
+export const pickSnapTarget = (cards: HTMLElement[], scroller: HTMLElement): SnapTarget | null => {
+  if (cards.length === 0) return null;
+  const area = scroller.getBoundingClientRect();
+  const margin = parseFloat(getComputedStyle(cards[0]).scrollMarginTop) || 0;
+  const alignAt = area.top + margin;
+  const visible = area.height - margin;
+  const reach = visible * SNAP_REACH;
+
+  // The start of the list, so the journey's heading above the first card can be scrolled back to -
+  // while that heading shows: once the first card has come up past the top, the visitor is in it.
+  const headingShows = cards[0].getBoundingClientRect().top > alignAt;
+  let best: SnapTarget | null =
+    headingShows && scroller.scrollTop <= reach ? { card: null, offset: -scroller.scrollTop } : null;
+  cards.forEach((card) => {
+    const rect = card.getBoundingClientRect();
+    const offset = rect.top - alignAt;
+    if (Math.abs(offset) > reach) return;
+    if (offset < 0 && rect.height > visible) return;
+    if (!best || Math.abs(offset) < Math.abs(best.offset)) best = { card, offset };
+  });
+  return best;
+};
+
+// Below this a snap isn't worth moving the list for (px).
+const SNAP_MIN_PX = 2;
+
+const snapBehavior = (): ScrollBehavior =>
+  typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth';
+
 // What the visitor does to scroll a list themselves; a scroll with none of these before it is
 // the panel moving on its own.
 const USER_SCROLL_EVENTS = ['wheel', 'touchstart', 'pointerdown', 'keydown'];
@@ -72,6 +117,9 @@ interface UseScrollSelectOptions {
   // The vertical scroller a column list sits in.
   getColumnScroller: (list: HTMLElement) => HTMLElement | null;
   onSelect: (poiId: string) => void;
+  // Scrolls a column's list so a card sits at the top of the panel (the panel's own card
+  // alignment, which also makes room below the last cards). Without it the column doesn't snap.
+  onSnap?: (card: HTMLElement, behavior: ScrollBehavior) => void;
   selectedId?: string | null;
 }
 
@@ -81,15 +129,18 @@ export const useScrollSelect = ({
   layout,
   listRef,
   onSelect,
+  onSnap,
   selectedId = null,
 }: UseScrollSelectOptions) => {
   const onSelectRef = useRef(onSelect);
+  const onSnapRef = useRef(onSnap);
   const selectedIdRef = useRef(selectedId);
   // Whether the visitor is the one scrolling, and the stop this hook last picked.
   const visitorScrolling = useRef(false);
   const pickedId = useRef<string | null>(null);
   useEffect(() => {
     onSelectRef.current = onSelect;
+    onSnapRef.current = onSnap;
     selectedIdRef.current = selectedId;
   });
 
@@ -120,10 +171,17 @@ export const useScrollSelect = ({
       const cards = Array.from(list.children).filter(
         (child): child is HTMLElement => child instanceof HTMLElement && !!child.dataset.poiId
       );
-      const id = pickCardInView(cards, scroller, row)?.dataset.poiId;
-      if (!id || id === selectedIdRef.current) return;
-      pickedId.current = id;
-      onSelectRef.current(id);
+      const snap = row || !onSnapRef.current ? null : pickSnapTarget(cards, scroller);
+      // A card snapped to is the one selected: the card at the top of the panel and the pin match.
+      const id = (snap?.card ?? pickCardInView(cards, scroller, row))?.dataset.poiId;
+      if (id && id !== selectedIdRef.current) {
+        pickedId.current = id;
+        onSelectRef.current(id);
+      }
+      if (!snap || Math.abs(snap.offset) < SNAP_MIN_PX) return;
+      // The snap's own scroll settles here again, finding the list already in place.
+      if (snap.card) onSnapRef.current?.(snap.card, snapBehavior());
+      else scroller.scrollTo?.({ behavior: snapBehavior(), top: 0 });
     };
     const onScroll = () => {
       clearTimeout(timer);

@@ -42,6 +42,10 @@ export const rowEdges = (scroller: HTMLElement) => {
   };
 };
 
+/** Whether a column has been scrolled to its end (and isn't simply too short to scroll). */
+const isAtListEnd = (scroller: HTMLElement) =>
+  scroller.scrollTop > 0 && scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 2;
+
 /**
  * The card the visitor has scrolled to: in a row, the one nearest the middle; in a column, the
  * last one whose top has come up past the reading line - or the last card once the list is
@@ -60,9 +64,7 @@ export const pickCardInView = (cards: HTMLElement[], scroller: HTMLElement, row:
     return cards.reduce((best, card) => (distance(card) < distance(best) ? card : best));
   }
 
-  if (scroller.scrollTop > 0 && scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 2) {
-    return cards[cards.length - 1];
-  }
+  if (isAtListEnd(scroller)) return cards[cards.length - 1];
   const margin = parseFloat(getComputedStyle(cards[0]).scrollMarginTop) || 0;
   const line = area.top + margin + (area.height - margin) * REACHED_AT;
   return cards.filter((card) => card.getBoundingClientRect().top <= line).pop() ?? cards[0];
@@ -82,17 +84,33 @@ export const pickSnapTarget = (cards: HTMLElement[], scroller: HTMLElement): Sna
   const alignAt = area.top + margin;
   const visible = area.height - margin;
   const reach = visible * SNAP_REACH;
+  const rects = cards.map((card) => card.getBoundingClientRect());
+  const isTall = (rect: DOMRect) => rect.height > visible;
+
+  // At the end of the list the last card is the one reached, as in `pickCardInView`, however far
+  // down a short one sits: otherwise a card nearer the top would win there, and the last stops
+  // could never be scrolled to. It snaps up (the panel makes room below it to), unless it's taller
+  // than the panel and already being read, when it is only selected.
+  if (isAtListEnd(scroller)) {
+    const last = cards.length - 1;
+    const offset = rects[last].top - alignAt;
+    return { card: cards[last], offset: offset < 0 && isTall(rects[last]) ? 0 : offset };
+  }
+
+  // A card taller than the panel across its top is being read: the cards before it don't snap back
+  // over it, while the ones after it still come into reach as its end comes up.
+  const reading = rects.findIndex((rect) => rect.top < alignAt && rect.bottom > alignAt && isTall(rect));
 
   // The start of the list, so the journey's heading above the first card can be scrolled back to -
   // while that heading shows: once the first card has come up past the top, the visitor is in it.
-  const headingShows = cards[0].getBoundingClientRect().top > alignAt;
+  const headingShows = rects[0].top > alignAt;
   let best: SnapTarget | null =
     headingShows && scroller.scrollTop <= reach ? { card: null, offset: -scroller.scrollTop } : null;
-  cards.forEach((card) => {
-    const rect = card.getBoundingClientRect();
-    const offset = rect.top - alignAt;
+  cards.forEach((card, index) => {
+    if (index <= reading) return;
+    const offset = rects[index].top - alignAt;
     if (Math.abs(offset) > reach) return;
-    if (offset < 0 && rect.height > visible) return;
+    if (offset < 0 && isTall(rects[index])) return;
     if (!best || Math.abs(offset) < Math.abs(best.offset)) best = { card, offset };
   });
   return best;

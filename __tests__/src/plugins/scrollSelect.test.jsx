@@ -1,7 +1,13 @@
 import { useRef } from 'react';
 import PropTypes from 'prop-types';
 import { act, render, screen } from '@testing-library/react';
-import { pickCardInView, rowEdges, SCROLL_SETTLE_MS, useScrollSelect } from '../../../src/plugins/scrollSelect.ts';
+import {
+  pickCardInView,
+  pickSnapTarget,
+  rowEdges,
+  SCROLL_SETTLE_MS,
+  useScrollSelect,
+} from '../../../src/plugins/scrollSelect.ts';
 
 const rect = (left, top, width, height) => ({
   bottom: top + height,
@@ -58,6 +64,81 @@ describe('pickCardInView', () => {
   });
 });
 
+describe('pickSnapTarget', () => {
+  // A 900px panel scrolled 1000px down: snap points within 450px of its top are in reach.
+  const panel = (scrollTop = 1000) =>
+    box(document.createElement('div'), [0, 0, 480, 900], { clientHeight: 900, scrollHeight: 4000, scrollTop });
+
+  it("snaps to the nearest card's top, either way", () => {
+    const cards = [box(card('a'), [0, -120, 400, 300]), box(card('b'), [0, 180, 400, 300]), box(card('c'), [0, 480, 400, 300])];
+    expect(pickSnapTarget(cards, panel())).toEqual({ card: cards[0], offset: -120 });
+
+    const lower = [box(card('a'), [0, -200, 400, 300]), box(card('b'), [0, 100, 400, 300])];
+    expect(pickSnapTarget(lower, panel())).toEqual({ card: lower[1], offset: 100 });
+  });
+
+  it("lines the card up below the host's scroll-margin-top", () => {
+    // jsdom doesn't compute scroll-margin-top, so the host's style is stood in for.
+    const style = vi.spyOn(window, 'getComputedStyle').mockReturnValue({ scrollMarginTop: '60px' });
+    const cards = [box(card('a'), [0, 140, 400, 300])];
+    expect(pickSnapTarget(cards, panel())).toEqual({ card: cards[0], offset: 80 });
+    style.mockRestore();
+  });
+
+  it('leaves a card taller than the panel alone once the visitor is reading it', () => {
+    const long = box(card('a'), [0, -80, 400, 1400]);
+    expect(pickSnapTarget([long, box(card('b'), [0, 1320, 400, 300])], panel())).toBeNull();
+
+    // As its top comes in, it snaps like any other card.
+    const entering = box(card('a'), [0, 200, 400, 1400]);
+    expect(pickSnapTarget([entering], panel())).toEqual({ card: entering, offset: 200 });
+  });
+
+  it('pulls in nothing further than half the panel away', () => {
+    expect(pickSnapTarget([box(card('a'), [0, -600, 400, 300]), box(card('b'), [0, 500, 400, 300])], panel())).toBeNull();
+  });
+
+  it('snaps back to the start of the list, so the journey heading can be read', () => {
+    const cards = [box(card('a'), [0, 300, 400, 300])];
+    expect(pickSnapTarget(cards, panel(120))).toEqual({ card: null, offset: -120 });
+  });
+
+  it("doesn't pull a reader back out of a tall card to the short card before it", () => {
+    // 80px into a 1400px card, with a 300px card ending just above it.
+    const short = box(card('a'), [0, -380, 400, 300]);
+    const tall = box(card('b'), [0, -80, 400, 1400]);
+    expect(pickSnapTarget([short, tall, box(card('c'), [0, 1320, 400, 300])], panel())).toBeNull();
+
+    // Near the tall card's end, the card after it still comes into reach.
+    const next = box(card('c'), [0, 280, 400, 300]);
+    const ending = [box(card('a'), [0, -1500, 400, 300]), box(card('b'), [0, -1200, 400, 1400]), next];
+    expect(pickSnapTarget(ending, panel())).toEqual({ card: next, offset: 280 });
+  });
+
+  it('reaches the last card at the end of the list, however far down it sits', () => {
+    // A 100px heading and five 300px cards in a 900px panel, scrolled to its end (700px): C sits
+    // at the top, but E is the card reached.
+    const end = box(document.createElement('div'), [0, 0, 480, 900], { clientHeight: 900, scrollHeight: 1600, scrollTop: 700 });
+    const cards = ['a', 'b', 'c', 'd', 'e'].map((id, i) => box(card(id), [0, 100 + i * 300 - 700, 400, 300]));
+    expect(pickSnapTarget(cards, end)).toEqual({ card: cards[4], offset: 600 });
+
+    // A last card taller than the panel that is already being read is selected where it is.
+    const tallEnd = box(document.createElement('div'), [0, 0, 480, 900], {
+      clientHeight: 900,
+      scrollHeight: 3000,
+      scrollTop: 2100,
+    });
+    const tall = box(card('e'), [0, -200, 400, 1100]);
+    expect(pickSnapTarget([box(card('d'), [0, -500, 400, 300]), tall], tallEnd)).toEqual({ card: tall, offset: 0 });
+  });
+
+  it('leaves the start alone once the visitor is reading a long first card', () => {
+    // 250px into a 1338px first card, near the top of the list.
+    const cards = [box(card('a'), [0, -190, 400, 1338]), box(card('b'), [0, 1148, 400, 300])];
+    expect(pickSnapTarget(cards, panel(268))).toBeNull();
+  });
+});
+
 describe('rowEdges', () => {
   it('tells whether a row can scroll further, either way the text runs', () => {
     const row = (scrollLeft) =>
@@ -75,7 +156,7 @@ describe('useScrollSelect', () => {
   afterEach(() => vi.useRealTimers());
 
   // A column of three cards in a scroller; the second card sits on the reading line.
-  const Harness = ({ onSelect, selectedId }) => {
+  const Harness = ({ onSelect, onSnap = undefined, selectedId }) => {
     const listRef = useRef(null);
     useScrollSelect({
       enabled: true,
@@ -84,6 +165,7 @@ describe('useScrollSelect', () => {
       layout: 'right',
       listRef,
       onSelect,
+      onSnap,
       selectedId,
     });
     return (
@@ -97,11 +179,15 @@ describe('useScrollSelect', () => {
     );
   };
 
-  Harness.propTypes = { onSelect: PropTypes.func.isRequired, selectedId: PropTypes.string.isRequired };
+  Harness.propTypes = {
+    onSelect: PropTypes.func.isRequired,
+    onSnap: PropTypes.func,
+    selectedId: PropTypes.string.isRequired,
+  };
 
-  const setup = (selectedId = 'a') => {
+  const setup = (selectedId = 'a', onSnap = undefined) => {
     const onSelect = vi.fn();
-    const view = render(<Harness onSelect={onSelect} selectedId={selectedId} />);
+    const view = render(<Harness onSelect={onSelect} onSnap={onSnap} selectedId={selectedId} />);
     const scroller = screen.getByTestId('scroller');
     box(scroller, [0, 0, 480, 900], { clientHeight: 900, scrollHeight: 3000, scrollTop: 400 });
     // eslint-disable-next-line testing-library/no-node-access -- the cards are plain markup
@@ -140,5 +226,54 @@ describe('useScrollSelect', () => {
     scroller.dispatchEvent(new Event('scroll'));
     act(() => vi.advanceTimersByTime(SCROLL_SETTLE_MS));
     expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it('snaps the card it settles on to the top of the panel, selecting it', () => {
+    const onSnap = vi.fn();
+    const { onSelect, scroller } = setup('a', onSnap);
+    scroller.dispatchEvent(new Event('wheel'));
+    scroller.dispatchEvent(new Event('scroll'));
+    act(() => vi.advanceTimersByTime(SCROLL_SETTLE_MS));
+
+    expect(onSelect).toHaveBeenCalledWith('b');
+
+    expect(onSnap).toHaveBeenCalledWith(scroller.firstElementChild.children[1], 'smooth');
+  });
+
+  it('snaps an already selected card back into place too', () => {
+    const onSnap = vi.fn();
+    const { onSelect, scroller } = setup('b', onSnap);
+    scroller.dispatchEvent(new Event('wheel'));
+    scroller.dispatchEvent(new Event('scroll'));
+    act(() => vi.advanceTimersByTime(SCROLL_SETTLE_MS));
+
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(onSnap).toHaveBeenCalledTimes(1);
+  });
+
+  it("doesn't snap the panel scrolling itself", () => {
+    const onSnap = vi.fn();
+    const { scroller } = setup('a', onSnap);
+    scroller.dispatchEvent(new Event('scroll'));
+    act(() => vi.advanceTimersByTime(SCROLL_SETTLE_MS));
+    expect(onSnap).not.toHaveBeenCalled();
+  });
+
+  it('selects and snaps the last stop at the end of a list of short cards, with no room below yet', () => {
+    const onSnap = vi.fn();
+    const { onSelect, scroller } = setup('a', onSnap);
+    // Scrolled to the end, the spacer below the cards still empty: b sits at the top, c below it.
+    box(scroller, [0, 0, 480, 900], { clientHeight: 900, scrollHeight: 1300, scrollTop: 400 });
+    // eslint-disable-next-line testing-library/no-node-access -- the cards are plain markup
+    const [a, b, c] = scroller.firstElementChild.children;
+    box(a, [0, -300, 400, 300]);
+    box(b, [0, 0, 400, 300]);
+    box(c, [0, 600, 400, 300]);
+    scroller.dispatchEvent(new Event('wheel'));
+    scroller.dispatchEvent(new Event('scroll'));
+    act(() => vi.advanceTimersByTime(SCROLL_SETTLE_MS));
+
+    expect(onSelect).toHaveBeenCalledWith('c');
+    expect(onSnap).toHaveBeenCalledWith(c, 'smooth');
   });
 });

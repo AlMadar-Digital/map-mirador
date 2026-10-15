@@ -1083,7 +1083,7 @@ const JourneyPreviewContent = ({
       else scrollCardIntoRow(stops, card, 'smooth');
       return undefined;
     }
-    // A card the visitor scrolled up to stays where they left it.
+    // A card the visitor scrolled to is snapped into place by useScrollSelect.
     if (scrolledTo) return undefined;
     scrollCardToTop(card, spacerRef.current, 'smooth');
 
@@ -1119,7 +1119,8 @@ const JourneyPreviewContent = ({
   };
 
   // Site preset: scrolling the list (swiping the carousel on a phone) selects the stop it comes
-  // to, and focuses the map on it like stepping the tour does.
+  // to, and focuses the map on it like stepping the tour does; in a column the card also snaps to
+  // the top of the panel.
   useScrollSelect({
     enabled: site,
     getColumnScroller: getScrollContainer,
@@ -1133,6 +1134,7 @@ const JourneyPreviewContent = ({
       if (point) focusMapOnPoint(windowId, point);
       dispatchSelectAnnotation(windowId, poi.id);
     },
+    onSnap: (card, behavior) => scrollCardToTop(card, spacerRef.current, behavior),
     selectedId: selectedAnnotationId,
   });
 

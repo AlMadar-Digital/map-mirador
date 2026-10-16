@@ -731,6 +731,14 @@ const scrollCardIntoRow = (list: HTMLElement, card: HTMLElement, behavior: Scrol
 
 const localeDir = (locale: ContentLocale) => (locale === 'ar' ? 'rtl' : 'ltr');
 
+// Issue #457: the editor's title bar follows the UI's direction, so a title in the content
+// locale carries its own - an Arabic title reads, and aligns, right-to-left in an English UI.
+const ContentTitle = ({ children, locale }: { children: ReactNode; locale: ContentLocale }) => (
+  <span dir={localeDir(locale)} lang={locale} style={{ display: 'block' }}>
+    {children}
+  </span>
+);
+
 type PanelPosition = 'right' | 'bottom';
 
 interface SitePanelProps {
@@ -970,13 +978,14 @@ const StopActions = ({ canEdit, isEditing, onEdit, onPreview, uiLocale }: StopAc
 };
 
 interface JourneyLinkProps {
+  contentLocale: ContentLocale;
   journeyTitle: string;
   onClick: () => void;
   uiLocale: ContentLocale;
 }
 
 // Issue #457: in the editor, a stop previewed on its own leads back to its journey.
-const JourneyLink = ({ journeyTitle, onClick, uiLocale }: JourneyLinkProps) => {
+const JourneyLink = ({ contentLocale, journeyTitle, onClick, uiLocale }: JourneyLinkProps) => {
   const labels = LABELS[uiLocale];
   return (
     <div dir={localeDir(uiLocale)} style={{ padding: '8px 16px 0' }}>
@@ -987,7 +996,16 @@ const JourneyLink = ({ journeyTitle, onClick, uiLocale }: JourneyLinkProps) => {
         startIcon={<ArrowBackIcon sx={uiLocale === 'ar' ? { transform: 'scaleX(-1)' } : undefined} />}
         sx={{ textTransform: 'none' }}
       >
-        {journeyTitle ? `${labels.backToJourney}: ${journeyTitle}` : labels.backToJourney}
+        {labels.backToJourney}
+        {journeyTitle && (
+          <>
+            {': '}
+            {/* Isolated so a title in the other direction keeps its own word order. */}
+            <bdi dir={localeDir(contentLocale)} lang={contentLocale}>
+              {journeyTitle}
+            </bdi>
+          </>
+        )}
       </Button>
     </div>
   );
@@ -1209,8 +1227,14 @@ const JourneyPreviewContent = ({
     );
   }
 
+  const heading = journeyTitle || labels.Journey;
   return (
-    <CompanionWindow id={id} title={journeyTitle || labels.Journey} windowId={windowId}>
+    <CompanionWindow
+      ariaLabel={heading}
+      id={id}
+      title={<ContentTitle locale={locale}>{heading}</ContentTitle>}
+      windowId={windowId}
+    >
       {editorToolbar}
       <div dir={localeDir(locale)} lang={locale} ref={stopsRef} style={{ padding: 16 }}>
         {pois.length === 0 && <p>{labels.noStops}</p>}
@@ -1383,8 +1407,14 @@ const PoiPreviewContent = ({
     );
   }
 
+  const heading = title || (kind && labels[kind]) || labels.preview;
   return (
-    <CompanionWindow id={id} title={title || (kind && labels[kind]) || labels.preview} windowId={windowId}>
+    <CompanionWindow
+      ariaLabel={heading}
+      id={id}
+      title={<ContentTitle locale={locale}>{heading}</ContentTitle>}
+      windowId={windowId}
+    >
       {editorToolbar}
       {journeyLink}
       <div dir={localeDir(locale)} lang={locale} style={{ padding: 16 }}>
@@ -1544,6 +1574,7 @@ const PreviewContent = ({
 
   const journeyLink = hasAnnotationEditor && annotation && journey && (
     <JourneyLink
+      contentLocale={shownLocale}
       journeyTitle={textBody(journey, shownLocale, 'identifying')}
       onClick={() => showInPreview(journey.id, annotation.id)}
       uiLocale={locale}

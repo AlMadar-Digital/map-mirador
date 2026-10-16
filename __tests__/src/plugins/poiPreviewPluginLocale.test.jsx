@@ -7,15 +7,19 @@ import { getVisibleCanvases } from '../../../src/index';
 // Only the preview's own content is under test here, not Mirador's companion window chrome.
 vi.mock('../../../src/index', async (importOriginal) => {
   /** Stand-in for the connected CompanionWindow: just its title and content */
-  function CompanionWindowStub({ children = null, title }) {
+  function CompanionWindowStub({ ariaLabel = undefined, children = null, title }) {
     return (
-      <section aria-label={title}>
+      <section aria-label={ariaLabel}>
         <h2>{title}</h2>
         {children}
       </section>
     );
   }
-  CompanionWindowStub.propTypes = { children: PropTypes.node, title: PropTypes.string.isRequired };
+  CompanionWindowStub.propTypes = {
+    ariaLabel: PropTypes.string,
+    children: PropTypes.node,
+    title: PropTypes.node.isRequired,
+  };
 
   const actual = await importOriginal();
   return {
@@ -246,7 +250,9 @@ describe('poiPreviewPlugin locale', () => {
 
       await userEvent.click(screen.getByRole('button', { name: 'العربية' }));
 
-      expect(screen.getByRole('heading', { name: 'القاهرة' })).toBeInTheDocument();
+      // The title bar follows the English UI; the Arabic title in it reads right-to-left (#457).
+      expect(screen.getByText('القاهرة')).toHaveAttribute('dir', 'rtl');
+      expect(screen.getByRole('region', { name: 'القاهرة' })).toBeInTheDocument();
       const description = screen.getByText('مدينة على النيل');
       // eslint-disable-next-line testing-library/no-node-access -- `dir` sits on the content wrapper, which has no role
       expect(description.closest('[dir]')).toHaveAttribute('dir', 'rtl');
@@ -263,6 +269,7 @@ describe('poiPreviewPlugin locale', () => {
       await userEvent.click(screen.getByRole('button', { name: 'العربية' }));
 
       expect(screen.getByRole('heading', { name: 'على طول النيل' })).toBeInTheDocument();
+      expect(screen.getByText('على طول النيل')).toHaveAttribute('dir', 'rtl');
       expect(screen.getByRole('heading', { name: 'القاهرة' })).toBeInTheDocument();
     });
 
@@ -390,6 +397,15 @@ describe('poiPreviewPlugin locale', () => {
 
         expect(updateCompanionWindow).toHaveBeenCalledWith('window', 'cw', { annotationid: 'journey' });
         expect(selectAnnotation).toHaveBeenCalledWith('window', 'poi');
+      });
+
+      it("isolates an Arabic journey title in the English UI's link back to it", async () => {
+        renderEditorPreview({ journey });
+
+        await userEvent.click(screen.getByRole('button', { name: 'العربية' }));
+
+        expect(screen.getByRole('button', { name: 'Back to journey: على طول النيل' })).toBeInTheDocument();
+        expect(screen.getByText('على طول النيل')).toHaveAttribute('dir', 'rtl');
       });
     });
 

@@ -136,6 +136,34 @@ describe('poiPreviewPlugin locale', () => {
         expect(thumbnail()).toHaveAttribute('src', 'https://iiif.example/iiif/3/folio.jpg/full/400,/0/default.jpg');
       });
 
+      it("shows the media's caption, credit and linked rights statement under its title (issue #520)", () => {
+        renderPreview(
+          withMedia({
+            caption: 'The world map of al-Idrisi',
+            credit: 'Courtesy of the Bodleian Libraries',
+            id: 'iiif-1',
+            rightsStatement: { label: 'In Copyright', uri: 'https://rightsstatements.org/vocab/InC/1.0/' },
+            source: 'iiif-image',
+            thumbnailUrl: null,
+            title: 'Tabula Rogeriana',
+          }),
+          'en',
+        );
+
+        expect(screen.getByText('The world map of al-Idrisi')).toBeInTheDocument();
+        expect(screen.getByText('Courtesy of the Bodleian Libraries')).toBeInTheDocument();
+        expect(screen.getByRole('link', { name: 'In Copyright' })).toHaveAttribute(
+          'href',
+          'https://rightsstatements.org/vocab/InC/1.0/',
+        );
+      });
+
+      it('shows no credit lines for media without any', () => {
+        renderPreview(withMedia({ id: 'iiif-1', source: 'iiif-image', thumbnailUrl: null, title: 'Tabula Rogeriana' }), 'en');
+
+        expect(screen.queryByTestId('poi-preview-media-credits')).not.toBeInTheDocument();
+      });
+
       it("shows a video upload's first frame next to its file name", () => {
         renderPreview(
           withMedia({

@@ -158,6 +158,11 @@ type DbfMedia = {
   url?: string | null;
   mime?: string | null;
   duration?: number | null;
+  // Issue #520: the caption, credit line and rights statement to show with the media, already
+  // resolved by the maps plugin in this slot's language. Absent when there is none.
+  caption?: string | null;
+  credit?: string | null;
+  rightsStatement?: { label: string | null; uri: string | null } | null;
 };
 
 type RawAnnotation = {
@@ -292,6 +297,28 @@ export const eyebrowFor = (annotation: RawAnnotation, locale: ContentLocale): st
 
 const IMAGE_FILE = /\.(avif|gif|jpe?g|png|svg|webp)$/i;
 
+// The editor preview's caption, credit and rights statement for a media (issue #520), one line
+// each, so staff can check what the CMS will show with it; a rights statement links to its URI.
+// The public site renders its own (the host's call, not this plugin's).
+const EDITOR_CREDIT_STYLE = { fontSize: '0.75rem', margin: '4px 0 0', opacity: 0.8 } as const;
+
+const EditorMediaCredits = ({ media }: { media: DbfMedia }) => {
+  const rights = media.rightsStatement;
+  const rightsText = rights?.label || rights?.uri;
+  if (!media.caption && !media.credit && !rightsText) return null;
+  return (
+    <div data-testid="poi-preview-media-credits">
+      {media.caption && <p style={EDITOR_CREDIT_STYLE}>{media.caption}</p>}
+      {media.credit && <p style={EDITOR_CREDIT_STYLE}>{media.credit}</p>}
+      {rightsText && (
+        <p style={EDITOR_CREDIT_STYLE}>
+          {rights?.uri ? <a href={rights.uri} rel="noopener noreferrer" target="_blank">{rightsText}</a> : rightsText}
+        </p>
+      )}
+    </div>
+  );
+};
+
 // A site card's media (`.dbf-map-poi__media`): the audio player for a recording, else its image.
 // A recording is titled with its Media Item's title (English only on the wire), else the POI's.
 const SiteMedia = ({ locale, media, poiTitle }: { locale: ContentLocale; media?: DbfMedia | null; poiTitle: string }) => {
@@ -411,6 +438,7 @@ const EditorMedia = ({ media }: { media: DbfMedia }) => {
       <figcaption style={{ minWidth: 0, overflowWrap: 'anywhere' }}>
         {media.title}
         {media.mediaType ? ` (${media.mediaType})` : ''}
+        <EditorMediaCredits media={media} />
       </figcaption>
     </figure>
   );

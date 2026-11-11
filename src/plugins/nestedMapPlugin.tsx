@@ -3,6 +3,7 @@ import OpenSeadragon from 'openseadragon';
 import Button from '@mui/material/Button';
 import ArrowBackIcon from '@mui/icons-material/ArrowBackSharp';
 import {
+  OSDReferences,
   addCompanionWindow,
   getCompanionWindows,
   getConfig,
@@ -98,6 +99,24 @@ export const getNestedOrigin = (state: unknown, windowId: string): NestedOrigin 
 // loads (OpenSeadragonComponent), so this is applied right after that.
 const pendingViewport = new Map<string, { x?: number; y?: number; zoom?: number }>();
 
+// The selection Back put back, per window. The map returns to the view the visitor left, so
+// the site's "centre and zoom on the selected POI" must not then move it onto that POI
+// (AlMadar-Digital/platform#549); any other selection, or closing the panel, ends that.
+const restoredSelections = new Map<string, string>();
+
+/** Whether `annotationId` is selected because Back restored it, not because the visitor picked it. */
+export const isRestoredSelection = (windowId: string, annotationId: string) => {
+  const restored = restoredSelections.get(windowId);
+  if (restored === annotationId) return true;
+  if (restored !== undefined) restoredSelections.delete(windowId);
+  return false;
+};
+
+/** Forgets the selection Back restored: the next time that POI is selected, it is the visitor's doing. */
+export const clearRestoredSelection = (windowId: string) => {
+  restoredSelections.delete(windowId);
+};
+
 /** True while Back is about to restore the parent map's view (fillView.ts leaves it alone). */
 export const hasPendingParentViewport = (windowId: string) => pendingViewport.has(windowId);
 
@@ -150,6 +169,68 @@ export const useRestoreParentViewport = (
   }, [viewer, windowId]);
 };
 
+const MAP_SWITCH_FADE_MS = 250;
+const MAP_SWITCH_TIMEOUT_MS = 3000;
+
+type SwitchViewer = {
+  addOnceHandler?: (name: string, handler: () => void) => void;
+  canvas?: HTMLElement;
+  drawer?: { canvas?: unknown };
+  world?: { addOnceHandler?: (name: string, handler: () => void) => void };
+};
+
+/**
+ * Keeps a still of the map on screen while another image takes its place, then fades it out, so
+ * the switch reads as a crossfade rather than a cut (site preset, AlMadar-Digital/platform#549).
+ * Call it right before the switch. It does nothing where motion is reduced, or where the map's
+ * canvas can't be copied - the switch is then the plain cut it was.
+ */
+export const crossfadeMapSwitch = (windowId: string) => {
+  if (typeof window === 'undefined' || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
+  const viewer = OSDReferences.get(windowId)?.current as SwitchViewer | null | undefined;
+  const source = viewer?.drawer?.canvas;
+  const host = viewer?.canvas;
+  if (!viewer?.world?.addOnceHandler || !host || !(source instanceof HTMLCanvasElement) || source.width === 0) return;
+
+  const still = document.createElement('canvas');
+  still.width = source.width;
+  still.height = source.height;
+  try {
+    still.getContext('2d')?.drawImage(source, 0, 0);
+  } catch {
+    return;
+  }
+  still.className = 'dbf-map-still';
+  still.setAttribute('aria-hidden', 'true');
+  // Over the map's own canvas, under its pins (sitePins.ts puts those at z-index 2).
+  Object.assign(still.style, { height: '100%', inset: '0', pointerEvents: 'none', position: 'absolute', width: '100%', zIndex: '1' });
+  host.appendChild(still);
+
+  let fading = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const fade = () => {
+    if (fading) return;
+    fading = true;
+    clearTimeout(timer);
+    const animation = still.animate?.([{ opacity: 1 }, { opacity: 0 }], { duration: MAP_SWITCH_FADE_MS, easing: 'ease' });
+    if (!animation) {
+      still.remove();
+      return;
+    }
+    animation.finished.catch(() => undefined).then(() => still.remove());
+  };
+  // Whatever happens to the new image, the still doesn't stay.
+  timer = setTimeout(fade, MAP_SWITCH_TIMEOUT_MS);
+  // Once the new image has its first tile, and fillView.ts has framed it (a frame later).
+  viewer.world.addOnceHandler('add-item', () => {
+    viewer.addOnceHandler?.('tile-loaded', () => {
+      requestAnimationFrame(() => requestAnimationFrame(fade));
+    });
+  });
+};
+
+const isSitePreset = (state: unknown) => (getConfig(state) as { maps?: { site?: boolean } }).maps?.site === true;
+
 const openPreviewOn = (windowId: string, annotationId: string, position: 'bottom' | 'right' = 'right') =>
   addCompanionWindow(windowId, { annotationid: annotationId, content: POI_PREVIEW_CONTENT_ID, position });
 
@@ -179,10 +260,11 @@ const switchWindowMap = (windowId: string, manifestId: string, mapHistory: MapHi
 /**
  * Opens a nested map in place of the window's current map, remembering the way back. Given the
  * POI it was opened from (the site preset), the panel keeps showing that POI, and Back returns
- * to the parent map as it was.
+ * to the parent map as it was: at the view the origin names (`viewer`, what the visitor left
+ * before the map zoomed onto the POI), else the view it has now. The site crossfades the switch.
  */
 export const openNestedMap =
-  (windowId: string, manifestId: string, origin?: Omit<NestedOrigin, 'viewer'>) =>
+  (windowId: string, manifestId: string, origin?: NestedOrigin) =>
   (dispatch: Dispatch, getState: GetState) => {
     const state = getState();
     const currentManifestId = (getWindow(state, { windowId }) as MiradorWindow | undefined)?.manifestId;
@@ -190,8 +272,12 @@ export const openNestedMap =
 
     const entry: MapHistoryEntry = { manifestId: currentManifestId };
     if (origin) {
-      entry.origin = { ...origin, viewer: getViewer(state, { windowId }) as Record<string, unknown> | undefined };
+      entry.origin = {
+        ...origin,
+        viewer: origin.viewer ?? (getViewer(state, { windowId }) as Record<string, unknown> | undefined),
+      };
     }
+    if (isSitePreset(state)) crossfadeMapSwitch(windowId);
     dispatch(switchWindowMap(windowId, manifestId, [...getMapHistory(state, windowId), entry]));
     if (origin?.annotation) dispatch(openPreviewOn(windowId, NESTED_ORIGIN_ID, origin.position));
   };
@@ -202,11 +288,13 @@ export const backToParentMap = (windowId: string) => (dispatch: Dispatch, getSta
   const parent = mapHistory[mapHistory.length - 1];
   if (!parent) return;
 
+  if (isSitePreset(getState())) crossfadeMapSwitch(windowId);
   dispatch(switchWindowMap(windowId, parent.manifestId, mapHistory.slice(0, -1)));
   const { origin } = parent;
   if (!origin) return;
   if (origin.viewer) pendingViewport.set(windowId, origin.viewer as { x?: number; y?: number; zoom?: number });
   if (origin.selectedAnnotationId) {
+    restoredSelections.set(windowId, origin.selectedAnnotationId);
     dispatch(selectAnnotation(windowId, origin.selectedAnnotationId));
     requestPinFocus(windowId, origin.selectedAnnotationId);
   }

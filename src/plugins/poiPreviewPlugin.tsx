@@ -8,6 +8,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
 } from 'react';
+import { flushSync } from 'react-dom';
 import DOMPurify from 'dompurify';
 import Button from '@mui/material/Button';
 import IconButton from '@mui/material/IconButton';
@@ -48,10 +49,12 @@ import {
   // resolve against during local dev.
 } from '../index';
 import {
+  clearRestoredSelection,
   getLinkedMapManifestId,
   getLinkedMapResolver,
   getNestedOrigin,
   isNestedMap,
+  isRestoredSelection,
   openNestedMap,
   resolveLinkedMapManifestId,
   useRestoreParentViewport,
@@ -64,7 +67,9 @@ import {
   consumeOpenMinimised,
   consumePanelFocus,
   isInsideMap,
+  notifyPanelClosed,
   PANEL_LABELS,
+  registerPanelCloseHandler,
   resetSheet,
   setPanelCollapsed,
   setSheetSnap,
@@ -77,8 +82,14 @@ import {
 import { useSheetGestures } from './sheetGestures';
 import { isRowLayout, useScrollSelect } from './scrollSelect';
 import { AudioPlayer, audioUrl } from './audioPlayer';
-import { getTourPois } from './tourOrder';
-import { halfwayViewBounds, normalizeInitialView, useFillView, type InitialView } from './fillView';
+import { getTourNumbers, getTourPois } from './tourOrder';
+import {
+  halfwayViewBounds,
+  normalizeInitialView,
+  returnToOpeningView,
+  useFillView,
+  type InitialView,
+} from './fillView';
 import { poiFocusZoom } from './focusZoom';
 import { readLineStyle, requestPinFocus, useSitePins, type PinResource } from './sitePins';
 
@@ -491,6 +502,14 @@ export const getPoiPoint = (poi: RawAnnotation): Point | null => {
 // stops' own bounding box (with a floor for journeys whose stops are almost on top of each other).
 const JOURNEY_FIT_PADDING_RATIO = 0.2;
 
+// How long a closing side panel may take to slide away before it is removed regardless.
+const PANEL_SLIDE_TIMEOUT_MS = 600;
+
+// Opening a POI's own image: how much further than a focus on the POI the map zooms in first,
+// and how long that may take before the image opens regardless.
+const NESTED_ENTRY_ZOOM_RATIO = 2;
+const NESTED_ENTRY_TIMEOUT_MS = 2000;
+
 // How close (in screen pixels) a pin may get to the edge of the visible map before
 // `ensurePointVisible` treats it as hidden - roughly a pin's own size, so it's never half cut off.
 const VISIBLE_AREA_MARGIN = 32;
@@ -505,7 +524,12 @@ const OVERLAY_COMPANION_WINDOW_SELECTOR = ['left', 'right', 'far-right', 'bottom
   .join(', ');
 
 type OsdViewport = OpenSeadragon.Viewport;
-type OsdViewer = { element?: HTMLElement; viewport?: OsdViewport };
+type OsdViewer = {
+  addOnceHandler?: (name: string, handler: () => void) => void;
+  element?: HTMLElement;
+  removeHandler?: (name: string, handler: () => void) => void;
+  viewport?: OsdViewport;
+};
 // A rectangle in the OpenSeadragon container's own pixel space.
 type PixelRect = { x: number; y: number; width: number; height: number };
 
@@ -716,6 +740,54 @@ export const zoomMapHalfwayToPoint = whenOverlaysSettle(zoomMapHalfwayToPointNow
 export const ensurePointVisible = whenOverlaysSettle(ensurePointVisibleNow);
 export const fitMapToPoints = whenOverlaysSettle(fitMapToPointsNow);
 
+// Windows zooming onto a POI on the way into its image: a second press meanwhile does nothing.
+const enteringNestedMap = new Set<string>();
+
+type LeftView = { x: number; y: number; zoom: number };
+
+/**
+ * Opens a POI's own image the way the site does (AlMadar-Digital/platform#549): the map zooms
+ * onto the POI, then `open` switches the image, which nestedMapPlugin crossfades. `open` gets the
+ * view the visitor left, for Back to return to. Without a viewer or a point, or where motion is
+ * reduced, it opens at once.
+ */
+export const enterNestedMap = (windowId: string, point: Point | null, open: (left?: LeftView) => void) => {
+  const viewer = getOsdViewer(windowId);
+  const viewport = viewer?.viewport;
+  const reducedMotion = typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+  if (!viewer?.addOnceHandler || !viewport || !point || reducedMotion) {
+    open();
+    return;
+  }
+  if (enteringNestedMap.has(windowId)) return;
+  enteringNestedMap.add(windowId);
+
+  const center = viewport.getCenter();
+  const left = { x: center.x, y: center.y, zoom: viewport.getZoom() };
+  const zoom = Math.min(viewport.getMaxZoom(), poiFocusZoom(viewport) * NESTED_ENTRY_ZOOM_RATIO);
+  showCenteredInVisibleArea(viewer, point, unitsPerPixelAtZoom(viewport, zoom));
+
+  let done = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const go = () => {
+    if (done) return;
+    done = true;
+    clearTimeout(timer);
+    viewer.removeHandler?.('animation-finish', go);
+    enteringNestedMap.delete(windowId);
+    open(left);
+  };
+  // The map is on the POI already: no animation is coming to wait for.
+  const from = viewport.getBounds(true);
+  const to = viewport.getBounds();
+  if (Math.abs(from.x - to.x) + Math.abs(from.y - to.y) + Math.abs(from.width - to.width) <= to.width * 1e-4) {
+    go();
+    return;
+  }
+  timer = setTimeout(go, NESTED_ENTRY_TIMEOUT_MS);
+  viewer.addOnceHandler('animation-finish', go);
+};
+
 // The scrolling content area of the companion window an element is in.
 const getScrollContainer = (element: HTMLElement) =>
   element.closest<HTMLElement>('.mirador-scrollto-scrollable');
@@ -801,8 +873,11 @@ const SitePanel = ({
   const collapsed = usePanelCollapsed(windowId);
   const snap = useSheetSnap(windowId);
   const isSheet = position === 'bottom';
-  // A panel opening on something new shows it - unless it was asked to open minimised.
+  // A panel opening on something new shows it - unless it was asked to open minimised. Not
+  // while it is closing: the selection cleared on the way changes what a journey's panel shows.
+  const closingRef = useRef(false);
   useEffect(() => {
+    if (closingRef.current) return;
     setPanelCollapsed(windowId, consumeOpenMinimised(windowId));
   }, [showing, windowId]);
 
@@ -829,15 +904,37 @@ const SitePanel = ({
   }, [focusRequest, showing, windowId]);
 
   const close = () => {
-    resetSheet(windowId);
-    dispatchRemoveCompanionWindow(windowId, id);
-    // Focus goes back to the POI's pin, or to the tab that reopens the panel.
-    if (returnFocusTo) {
-      requestPinFocus(windowId, returnFocusTo);
-    } else {
-      const mapWindow = bodyRef.current?.closest('.mirador-window');
-      requestAnimationFrame(() => mapWindow?.querySelector<HTMLElement>('.dbf-map-panel__toggle')?.focus());
+    if (closingRef.current) return;
+    closingRef.current = true;
+    const mapWindow = bodyRef.current?.closest('.mirador-window');
+    const remove = () => {
+      dispatchRemoveCompanionWindow(windowId, id);
+      resetSheet(windowId);
+      // Focus goes back to the POI's pin, or to the tab that reopens the panel.
+      if (returnFocusTo) {
+        requestPinFocus(windowId, returnFocusTo);
+      } else {
+        requestAnimationFrame(() => mapWindow?.querySelector<HTMLElement>('.dbf-map-panel__toggle')?.focus());
+      }
+    };
+    // The side panel slides away the way its tab collapses it, and is removed once it is out of
+    // sight (AlMadar-Digital/platform#549). The phone's sheet, and a panel its host doesn't
+    // animate (reduced motion too), close at once.
+    const panel = isSheet ? null : bodyRef.current?.closest<HTMLElement>('.mirador-companion-window-right');
+    if (panel) flushSync(() => setPanelCollapsed(windowId, true));
+    const slide = panel ? runningAnimations(panel).filter((animation) => 'transitionProperty' in animation) : [];
+    // Closing clears the selection and takes the map back to its opening view.
+    notifyPanelClosed(windowId);
+    if (slide.length === 0) {
+      remove();
+      return;
     }
+    Promise.race([
+      Promise.all(slide.map((transition) => transition.finished.catch(() => undefined))),
+      new Promise((resolve) => {
+        setTimeout(resolve, PANEL_SLIDE_TIMEOUT_MS);
+      }),
+    ]).then(remove);
   };
   const closeRef = useRef(close);
   useEffect(() => {
@@ -1064,6 +1161,9 @@ interface JourneyPreviewContentProps {
   renderStopActions?: (poi: RawAnnotation) => ReactNode;
   selectAnnotation: typeof selectAnnotation;
   selectedAnnotationId?: string;
+  // Each stop's number in the tour, on a map that numbers all its POIs (`numberPins`); without
+  // it a stop shows its place in the journey.
+  stopNumbers?: Map<string, number> | null;
   // The host's resolver for linked maps without a manifest URL.
   linkedMapResolver?: LinkedMapManifestResolver | null;
   windowId: string;
@@ -1081,12 +1181,20 @@ const JourneyPreviewContent = ({
   renderStopActions,
   selectAnnotation: dispatchSelectAnnotation,
   selectedAnnotationId,
+  stopNumbers = null,
   linkedMapResolver = null,
   site = false,
   windowId,
 }: JourneyPreviewContentProps) => {
   const labels = LABELS[locale];
   const journeyTitle = textBody(journey, locale, 'identifying');
+  // The site centres and zooms the map on a selected stop (AlMadar-Digital/platform#549) -
+  // unless Back selected it, returning to the view the visitor left. The editor only brings a
+  // stop out from under the panel, leaving the view the editor is working in.
+  const showPoint = (targetWindowId: string, point: Point, poiId: string) => {
+    if (!site || isRestoredSelection(targetWindowId, poiId)) ensurePointVisible(targetWindowId, point);
+    else focusMapOnPoint(targetWindowId, point);
+  };
 
   const stopsRef = useRef<HTMLDivElement>(null);
   const spacerRef = useRef<HTMLDivElement>(null);
@@ -1102,7 +1210,7 @@ const JourneyPreviewContent = ({
   const points = pois.map(getPoiPoint).filter((point): point is Point => point !== null);
   const pointsKey = points.map(({ x, y }) => `${x},${y}`).join(';');
   useEffect(() => {
-    if (selectedStopPoint) ensurePointVisible(windowId, selectedStopPoint);
+    if (selectedStop && selectedStopPoint) showPoint(windowId, selectedStopPoint, selectedStop.id);
     else fitMapToPoints(windowId, points);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `points` is captured by `pointsKey`; the selected stop only matters when the journey is (re)framed
   }, [journey.id, pointsKey, windowId]);
@@ -1116,7 +1224,7 @@ const JourneyPreviewContent = ({
       if (spacerRef.current) spacerRef.current.style.height = '0px';
       return undefined;
     }
-    if (selectedStopPoint) ensurePointVisible(windowId, selectedStopPoint);
+    if (selectedStopPoint) showPoint(windowId, selectedStopPoint, selectedStop.id);
     const stops = stopsRef.current;
     const card = Array.from(stops?.children ?? []).find(
       (child): child is HTMLElement => (child as HTMLElement).dataset.poiId === selectedStop.id
@@ -1149,13 +1257,21 @@ const JourneyPreviewContent = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- re-runs only when another stop is selected
   }, [selectedStop?.id, windowId]);
 
-  // Pressing a stop's card. In the site preset a stop with a nested map opens it (T-11), the
-  // panel carrying the stop; anything else selects and focuses the stop. Browsing - scrolling,
-  // swiping, the tour - only selects, so it never opens a nested map.
+  // The map a stop's card opens when pressed, in the site preset (T-11).
+  const nestedMapOf = (poi: RawAnnotation) =>
+    site && dispatchOpenNestedMap ? resolveLinkedMapManifestId(poi['dbf:linkedMap'], linkedMapResolver) : null;
+
+  // Pressing a stop's title or, when it has a nested map, its card. In the site preset a stop
+  // with a nested map opens it (T-11), the panel carrying the stop; anything else selects and
+  // focuses the stop. Browsing - scrolling, swiping, the tour - only selects, so it never opens
+  // a nested map.
   const focusPoi = (poi: RawAnnotation) => {
-    const linkedMapManifestId = site ? resolveLinkedMapManifestId(poi['dbf:linkedMap'], linkedMapResolver) : null;
+    const linkedMapManifestId = nestedMapOf(poi);
     if (linkedMapManifestId && dispatchOpenNestedMap) {
-      dispatchOpenNestedMap(windowId, linkedMapManifestId, nestedOriginFor(poi, journey.id, position));
+      const origin = nestedOriginFor(poi, journey.id, position);
+      enterNestedMap(windowId, getPoiPoint(poi), (left) =>
+        dispatchOpenNestedMap(windowId, linkedMapManifestId, left ? { ...origin, viewer: left } : origin)
+      );
       return;
     }
     const point = getPoiPoint(poi);
@@ -1186,8 +1302,9 @@ const JourneyPreviewContent = ({
 
   if (site) {
     // Stops are cards separated by a divider (`.dbf-map-poi*` class contract). Each card's
-    // title is its keyboard target, the card itself the pointer target; the marker carries
-    // the stop's number.
+    // title is its keyboard target; the card itself is a pointer target only when it opens the
+    // stop's own image (`data-action="open"`, AlMadar-Digital/platform#549) - otherwise scrolling
+    // to a card or pressing its pin selects it. The marker carries the stop's number.
     return (
       <SitePanel
         id={id}
@@ -1206,18 +1323,20 @@ const JourneyPreviewContent = ({
             const description = sanitizeDescription(textBody(poi, locale, 'describing'));
             const media = mediaForLocale(poi, locale);
             const isSelected = poi.id === selectedAnnotationId;
+            const opensNestedMap = !!nestedMapOf(poi);
             const card = (
               // eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-noninteractive-element-interactions -- the title button is the keyboard target
               <article
                 className="dbf-map-poi"
+                data-action={opensNestedMap ? 'open' : undefined}
                 data-poi-id={poi.id}
                 data-selected={isSelected ? 'true' : undefined}
                 data-variant="stop"
                 key={poi.id}
-                onClick={() => focusPoi(poi)}
+                onClick={opensNestedMap ? () => focusPoi(poi) : undefined}
               >
                 <div className="dbf-map-poi__header">
-                  <span className="dbf-map-poi__marker">{index + 1}</span>
+                  <span className="dbf-map-poi__marker">{stopNumbers?.get(poi.id) ?? index + 1}</span>
                   <div className="dbf-map-poi__heading">
                     {(eyebrowFor(poi, locale) || journeyTitle) && (
                       <p className="dbf-map-poi__eyebrow">{eyebrowFor(poi, locale) || journeyTitle}</p>
@@ -1351,7 +1470,7 @@ const JourneyPreviewContent = ({
   );
 };
 
-type OpenNestedMap = (windowId: string, manifestId: string, origin?: Omit<NestedOrigin, 'viewer'>) => void;
+type OpenNestedMap = (windowId: string, manifestId: string, origin?: NestedOrigin) => void;
 
 interface PoiPreviewContentProps {
   annotation: RawAnnotation | null;
@@ -1392,11 +1511,15 @@ const PoiPreviewContent = ({
   const description = annotation ? sanitizeDescription(textBody(annotation, locale, 'describing')) : '';
   const media = annotation ? mediaForLocale(annotation, locale) : null;
 
-  // The preview panel floats over the map, so the pin it describes may now be behind it. A
-  // carried POI's point is on the parent map, not this one.
+  // The preview panel floats over the map, so the pin it describes may now be behind it: the
+  // editor brings it out from under the panel, the site centres and zooms the map on it
+  // (AlMadar-Digital/platform#549) - unless Back selected it, returning to the view the visitor
+  // left. A carried POI's point is on the parent map, not this one.
   const point = annotation && !carried ? getPoiPoint(annotation) : null;
   useEffect(() => {
-    if (point) ensurePointVisible(windowId, point);
+    if (!point || !annotation) return;
+    if (site && !isRestoredSelection(windowId, annotation.id)) focusMapOnPoint(windowId, point);
+    else ensurePointVisible(windowId, point);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on the pin's position, `point` is a fresh object each render
   }, [annotation?.id, point?.x, point?.y, windowId]);
 
@@ -1535,6 +1658,8 @@ interface PreviewContentProps {
   selectAnnotation: typeof selectAnnotation;
   selectedAnnotationId?: string;
   site?: boolean;
+  // Each POI's number in the tour, on a map that numbers all its POIs (`numberPins`).
+  tourNumbers?: Map<string, number> | null;
   updateCompanionWindow?: typeof updateCompanionWindow;
   windowId: string;
 }
@@ -1561,6 +1686,7 @@ const PreviewContent = ({
   selectAnnotation: dispatchSelectAnnotation,
   selectedAnnotationId,
   site,
+  tourNumbers = null,
   updateCompanionWindow: dispatchUpdateCompanionWindow,
   windowId,
 }: PreviewContentProps) => {
@@ -1636,6 +1762,7 @@ const PreviewContent = ({
         renderStopActions={renderStopActions || undefined}
         selectAnnotation={dispatchSelectAnnotation}
         selectedAnnotationId={selectedAnnotationId}
+        stopNumbers={tourNumbers}
         linkedMapResolver={linkedMapResolver}
         site={site}
         windowId={windowId}
@@ -1677,7 +1804,7 @@ const poiPreviewCompanionWindowPlugin = {
     const config = getConfig(state) as {
       annotation?: { adapter?: unknown; readonly?: boolean };
       language?: string;
-      maps?: { site?: boolean };
+      maps?: { numberPins?: boolean; site?: boolean };
     };
     const locale = getContentLocale(config.language);
     // dbf-mirador-annotation-editor is registered (as in the Strapi editor) when Mirador is
@@ -1713,6 +1840,7 @@ const poiPreviewCompanionWindowPlugin = {
       selectedAnnotationId,
       // MapViewer's site preset renders the site's markup; the annotation editor never sets it.
       site: config.maps?.site === true,
+      tourNumbers: config.maps?.site === true && config.maps.numberPins === true ? getTourNumbers(items) : null,
     };
   },
   mapDispatchToProps: {
@@ -1793,6 +1921,7 @@ type AnnotationListItem = { id?: string; resources?: AnnotationResourceLike[] };
 interface AnnotationsOverlayTargetProps {
   annotations?: AnnotationListItem[];
   canvasWorld?: { canvases?: { id: string }[]; offsetByCanvas?: (canvasId: string) => { x: number; y: number } };
+  deselectAnnotation?: (windowId: string, annotationId: string) => void;
   searchAnnotations?: AnnotationListItem[];
   selectAnnotation?: (windowId: string, annotationId: string) => void;
   selectedAnnotationId?: string | null;
@@ -1811,6 +1940,8 @@ interface AnnotationsOverlayPoiClickWrapperProps {
   initialView?: InitialView;
   linkedMapResolver?: LinkedMapManifestResolver | null;
   locale?: ContentLocale;
+  // The host numbers every pin by its place in the tour (MapViewer's `numberPins`).
+  numberPins?: boolean;
   openNestedMap?: OpenNestedMap;
   previewShowsMapInfo?: boolean;
   site?: boolean;
@@ -1858,6 +1989,7 @@ const AnnotationsOverlayPoiClickWrapper = ({
   initialView = 'fill',
   linkedMapResolver = null,
   locale = 'en',
+  numberPins = false,
   openNestedMap: dispatchOpenNestedMap,
   previewShowsMapInfo = false,
   site = false,
@@ -1865,6 +1997,24 @@ const AnnotationsOverlayPoiClickWrapper = ({
 }: AnnotationsOverlayPoiClickWrapperProps) => {
   const { annotations = [], searchAnnotations = [], selectAnnotation } = targetProps;
   const previewPosition = usePreviewPosition();
+
+  // Closing the site's panel clears the selection and takes the map back to the view it opened
+  // with (AlMadar-Digital/platform#549). Read through a ref: the handler is registered once.
+  const closedRef = useRef({ deselect: targetProps.deselectAnnotation, selectedId: targetProps.selectedAnnotationId });
+  useEffect(() => {
+    closedRef.current = { deselect: targetProps.deselectAnnotation, selectedId: targetProps.selectedAnnotationId };
+  });
+  useEffect(() => {
+    if (!site) return undefined;
+    const { windowId } = targetProps;
+    return registerPanelCloseHandler(windowId, () => {
+      const { deselect, selectedId } = closedRef.current;
+      if (selectedId) deselect?.(windowId, selectedId);
+      clearRestoredSelection(windowId);
+      returnToOpeningView(windowId);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on the window; `targetProps` is a fresh object each render
+  }, [site, targetProps.windowId]);
 
   const selectAnnotationAndMaybePreview = (clickedWindowId: string, annotationId: string) => {
     selectAnnotation?.(clickedWindowId, annotationId);
@@ -1905,11 +2055,24 @@ const AnnotationsOverlayPoiClickWrapper = ({
     [items, locale]
   );
   const tourOrder = useMemo(() => getTourPois(items).map((poi) => poi.id), [items]);
+  // The POIs that open an image of their own: their pins are marked (`data-kind="nested"`).
+  const nestedIds = useMemo(
+    () =>
+      new Set(
+        items
+          .filter((item) => resolveLinkedMapManifestId(item['dbf:linkedMap'], linkedMapResolver))
+          .map((item) => item.id)
+      ),
+    [items, linkedMapResolver]
+  );
+  const pinNumbers = useMemo(() => (numberPins ? getTourNumbers(items) : null), [items, numberPins]);
   useSitePins({
     canvasWorld: targetProps.canvasWorld,
     enabled: site,
     labels,
     locale,
+    nestedIds,
+    numbers: pinNumbers,
     order: tourOrder,
     onSelect: (annotationId, { browsing } = {}) => {
       // Arrowing along the pins only browses: it selects, so it never opens a nested map.
@@ -1924,7 +2087,10 @@ const AnnotationsOverlayPoiClickWrapper = ({
       const manifestId = item ? resolveLinkedMapManifestId(item['dbf:linkedMap'], linkedMapResolver) : null;
       if (item && manifestId && dispatchOpenNestedMap) {
         const previewAnnotationId = getPreviewAnnotationId(item, (id) => items.some((candidate) => candidate.id === id));
-        dispatchOpenNestedMap(targetProps.windowId, manifestId, nestedOriginFor(item, previewAnnotationId, previewPosition));
+        const origin = nestedOriginFor(item, previewAnnotationId, previewPosition);
+        enterNestedMap(targetProps.windowId, getPoiPoint(item), (left) =>
+          dispatchOpenNestedMap(targetProps.windowId, manifestId, left ? { ...origin, viewer: left } : origin)
+        );
         return;
       }
       selectAnnotationAndMaybePreview(targetProps.windowId, annotationId);
@@ -1934,10 +2100,11 @@ const AnnotationsOverlayPoiClickWrapper = ({
     viewer: targetProps.viewer,
     windowId: targetProps.windowId,
   });
+  // The phone's sheet only: beside the map, the side panel stays open (AlMadar-Digital/platform#549).
   useMinimiseOnFirstInteraction(
     targetProps.viewer as Parameters<typeof useMinimiseOnFirstInteraction>[0],
     targetProps.windowId,
-    site,
+    site && previewPosition === 'bottom',
     previewShowsMapInfo
   );
   useRestoreParentViewport(
@@ -2010,6 +2177,7 @@ const poiPreviewClickPlugin = {
       ? 'fill'
       : normalizeInitialView((getConfig(state) as { maps?: { initialView?: unknown } }).maps?.initialView),
     locale: getContentLocale((getConfig(state) as { language?: string }).language),
+    numberPins: (getConfig(state) as { maps?: { numberPins?: boolean } }).maps?.numberPins === true,
     site: (getConfig(state) as { maps?: { site?: boolean } }).maps?.site === true,
   }),
   mapDispatchToProps: { addCompanionWindow, openNestedMap, updateCompanionWindow, updateViewport },

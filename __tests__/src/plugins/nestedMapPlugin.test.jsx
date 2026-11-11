@@ -5,8 +5,10 @@ import { addCompanionWindow, addWindow, receiveManifest, selectAnnotation, updat
 import { getCompanionWindows, getSelectedAnnotationId, getWindow } from '../../../src/state/selectors';
 import {
   backToParentMap,
+  clearRestoredSelection,
   getLinkedMapManifestId,
   getNestedOrigin,
+  isRestoredSelection,
   nestedMapPlugins,
   openNestedMap,
 } from '../../../src/plugins/nestedMapPlugin.tsx';
@@ -138,6 +140,28 @@ describe('nestedMapPlugin', () => {
       expect(getSelectedAnnotationId(store.getState(), { windowId: 'w' })).toBe('frontispiece');
       expect(previews(store)).toEqual([expect.objectContaining({ annotationid: 'journey' })]);
       expect(getNestedOrigin(store.getState(), 'w')).toBeNull();
+    });
+
+    it('returns to the view the origin names, and marks the selection as restored, not picked (AlMadar-Digital/platform#549)', () => {
+      // The mark outlives a store: an earlier Back in this file may have left one on this window.
+      clearRestoredSelection('w');
+      const store = setupStore();
+      const left = { x: 10, y: 20, zoom: 3 };
+      store.dispatch(openNestedMap('w', NESTED, { ...origin, viewer: left }));
+      expect(getNestedOrigin(store.getState(), 'w').viewer).toEqual(left);
+      expect(isRestoredSelection('w', 'frontispiece')).toBe(false);
+
+      store.dispatch(backToParentMap('w'));
+      // The map stays where the visitor left it rather than moving onto the POI again...
+      expect(isRestoredSelection('w', 'frontispiece')).toBe(true);
+      // ...until they select something else, or close the panel.
+      expect(isRestoredSelection('w', 'another')).toBe(false);
+      expect(isRestoredSelection('w', 'frontispiece')).toBe(false);
+
+      store.dispatch(openNestedMap('w', NESTED, origin));
+      store.dispatch(backToParentMap('w'));
+      clearRestoredSelection('w');
+      expect(isRestoredSelection('w', 'frontispiece')).toBe(false);
     });
   });
 

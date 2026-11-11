@@ -111,12 +111,25 @@ export const MAP_VIEWER_LANGUAGES = ['en', 'ar'];
  * swiping the mobile sheet, or a quick horizontal swipe on the map, while a slower drag pans -
  * see mapInteractionPlugin.tsx.
  *
+ * With `site`, the side panel opens with the map and stays open until closed; closing it clears
+ * the selection and returns the map to its opening view. Selecting a POI centres and zooms the
+ * map on it. A POI with a nested map opens it with a zoom onto the POI and a crossfade.
+ * `numberPins` numbers every pin by its place in the tour, not only a journey's stops - for a
+ * host that shows the same places elsewhere (a modern map) and needs them to match.
+ *
  * With `site`, a map opens filling the view with all its POIs in it (`initialView` 'fill'), or
  * zooms in from there: halfway towards the first POI of the tour ('halfway') or onto it
  * ('firstPoi'), without selecting it. Only the map MapViewer opens - a nested map always opens
  * filling the view - and a map without POIs stays filled. Read when the viewer is created.
  */
-export function MapViewer({ getLinkedMapManifestId = undefined, initialView = 'fill', lang = 'en', manifestId, site = false }) {
+export function MapViewer({
+  getLinkedMapManifestId = undefined,
+  initialView = 'fill',
+  lang = 'en',
+  manifestId,
+  numberPins = false,
+  site = false,
+}) {
   const baseId = useId().replace(/:/g, '');
   const wrapperRef = useRef(null);
   const instanceRef = useRef(null);
@@ -158,6 +171,7 @@ export function MapViewer({ getLinkedMapManifestId = undefined, initialView = 'f
           // than Mirador's own; the annotation editor never sets this.
           site,
           initialView: initialViewRef.current,
+          numberPins,
           getLinkedMapManifestId: hasLinkedMapResolver
             ? (linkedMap) => getLinkedMapManifestIdRef.current?.(linkedMap)
             : undefined,
@@ -173,7 +187,7 @@ export function MapViewer({ getLinkedMapManifestId = undefined, initialView = 'f
       instance.unmount();
       container.remove();
     };
-  }, [baseId, hasLinkedMapResolver, manifestId, site]);
+  }, [baseId, hasLinkedMapResolver, manifestId, numberPins, site]);
 
   useEffect(() => {
     const store = instanceRef.current?.store;
@@ -204,6 +218,8 @@ MapViewer.propTypes = {
   lang: PropTypes.oneOf(MAP_VIEWER_LANGUAGES),
   /** URL of the IIIF manifest to render as a map. */
   manifestId: PropTypes.string.isRequired,
+  /** With `site`: number every pin by its place in the tour, not only a journey's stops. */
+  numberPins: PropTypes.bool,
   /** Opt in to the site preset: the public site's map UI, which its host page styles (`.dbf-map*`). Off by default: Mirador's own UI. */
   site: PropTypes.bool,
 };

@@ -6,8 +6,9 @@ import { requestPanelFocus } from './sitePanelState';
 // The site preset's map pins: real buttons in OpenSeadragon overlays, one per POI, instead of
 // icons drawn on the annotation canvas - so they can be focused and pressed from the keyboard,
 // read out by a screen reader, and drawn entirely by the host page's CSS (`.dbf-map-pin`, an
-// empty button with `data-number`, `data-selected` and `data-kind`). The overlay is an empty
-// anchor on the POI's point; the host's CSS places the pin's tip on it.
+// empty button with `data-number`, `data-selected` and `data-kind`: "nested" for a POI that
+// opens an image of its own, else "poi"). The overlay is an empty anchor on the POI's point; the
+// host's CSS places the pin's tip on it.
 //
 // Keyboard (T-37): the pins sit in the page in tour order and are one tab stop (the selected
 // pin, else the first); the arrow keys move between them, selecting as they go; Enter or Space
@@ -37,6 +38,11 @@ interface UseSitePinsOptions {
   // The POIs' titles; a pin is named "<title>, stop n of m" when it is a journey stop.
   labels: Map<string, string>;
   locale?: 'ar' | 'en';
+  // The POIs that open an image of their own (a nested map): their pins say so.
+  nestedIds?: Set<string>;
+  // Every POI's number, on a map that numbers them all (tourOrder.ts's getTourNumbers). Without
+  // it only a journey's stops are numbered, each within its journey.
+  numbers?: Map<string, number> | null;
   // POI ids in tour order (tourOrder.ts): the pins' order in the page.
   order?: string[];
   // `browsing` when the arrow keys moved along the pins, rather than a pin being pressed.
@@ -80,13 +86,22 @@ const takePendingPinFocus = (windowId: string): string | undefined => {
   return pending.annotationId;
 };
 
-/** A pin's accessible name: its title, and its place in the journey when it is a stop. */
-export const pinLabel = (title: string, stop: { count: number; number: number } | null, locale: 'ar' | 'en') => {
+/**
+ * A pin's accessible name: its title, its place in the journey (or the tour) when it has a
+ * number, and that it opens another image when it does.
+ */
+export const pinLabel = (
+  title: string,
+  stop: { count: number; number: number } | null,
+  locale: 'ar' | 'en',
+  { nested = false }: { nested?: boolean } = {}
+) => {
+  const comma = locale === 'ar' ? '، ' : ', ';
+  const where = stop && (locale === 'ar' ? `المحطة ${stop.number} من ${stop.count}` : `stop ${stop.number} of ${stop.count}`);
   // A lone POI with no title in this language still needs a name.
-  if (!stop) return title || (locale === 'ar' ? 'نقطة اهتمام' : 'Point of interest');
-  const where = locale === 'ar' ? `المحطة ${stop.number} من ${stop.count}` : `stop ${stop.number} of ${stop.count}`;
-  if (!title) return where;
-  return locale === 'ar' ? `${title}، ${where}` : `${title}, ${where}`;
+  const name = title || (stop ? '' : locale === 'ar' ? 'نقطة اهتمام' : 'Point of interest');
+  const opens = nested && (locale === 'ar' ? 'يفتح صورة أخرى' : 'opens another image');
+  return [name, where, opens].filter(Boolean).join(comma);
 };
 
 const NEXT_KEYS: Record<string, 1 | -1 | 'first' | 'last'> = {
@@ -105,6 +120,8 @@ export const useSitePins = ({
   enabled,
   labels,
   locale = 'en',
+  nestedIds,
+  numbers = null,
   onSelect,
   order = [],
   resources,
@@ -154,6 +171,8 @@ export const useSitePins = ({
       [id, pointSelector.x, pointSelector.y, targetId, journeyId ?? '', journeyOrder ?? ''].join(':'))
     .join('|');
   const labelsKey = [...labels].map(([id, label]) => `${id}=${label}`).join('|');
+  const nestedKey = nestedIds ? [...nestedIds].join('|') : '';
+  const numbersKey = numbers ? [...numbers].map(([id, number]) => `${id}=${number}`).join('|') : '';
 
   useEffect(() => {
     const pins = pinsRef.current;
@@ -182,7 +201,6 @@ export const useSitePins = ({
         const button = document.createElement('button');
         button.type = 'button';
         button.className = 'dbf-map-pin';
-        button.dataset.kind = 'poi';
         SWALLOWED_EVENTS.forEach((name) => button.addEventListener(name, (event) => event.stopPropagation()));
         button.addEventListener('click', (event) => {
           event.stopPropagation();
@@ -203,18 +221,21 @@ export const useSitePins = ({
       }
 
       const { button } = pin;
-      const stopNumber = stopNumbers.get(resource.id);
+      const nested = nestedIds?.has(resource.id) === true;
+      button.dataset.kind = nested ? 'nested' : 'poi';
+      const stopNumber = numbers ? numbers.get(resource.id) : stopNumbers.get(resource.id);
       if (stopNumber != null) button.dataset.number = String(stopNumber);
       else delete button.dataset.number;
       const selected = resource.id === selectedAnnotationId;
       if (selected) button.dataset.selected = 'true';
       else delete button.dataset.selected;
       button.setAttribute('aria-pressed', String(selected));
-      const stop =
-        stopNumber != null && resource.journeyId != null
-          ? { count: stopCounts.get(resource.journeyId) ?? stopNumber, number: stopNumber }
-          : null;
-      button.setAttribute('aria-label', pinLabel(labels.get(resource.id) ?? '', stop, locale));
+      let stop: { count: number; number: number } | null = null;
+      if (stopNumber != null && numbers) stop = { count: numbers.size, number: stopNumber };
+      else if (stopNumber != null && resource.journeyId != null) {
+        stop = { count: stopCounts.get(resource.journeyId) ?? stopNumber, number: stopNumber };
+      }
+      button.setAttribute('aria-label', pinLabel(labels.get(resource.id) ?? '', stop, locale, { nested }));
       seen.add(resource.id);
     });
 
@@ -251,8 +272,8 @@ export const useSitePins = ({
       pendingPinFocus.delete(windowId);
       focusPin.button.focus({ preventScroll: true });
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- `resources`, `labels` and `order` are fresh each render; their keys say when they change
-  }, [canvasWorld, enabled, labelsKey, locale, order.join('|'), resourcesKey, selectedAnnotationId, viewer, windowId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `resources`, `labels`, `order`, `nestedIds` and `numbers` are fresh each render; their keys say when they change
+  }, [canvasWorld, enabled, labelsKey, locale, nestedKey, numbersKey, order.join('|'), resourcesKey, selectedAnnotationId, viewer, windowId]);
 
   useEffect(() => {
     const pins = pinsRef.current;

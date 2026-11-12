@@ -1,7 +1,9 @@
 import { act, renderHook } from '@testing-library/react';
 import {
   consumeOpenMinimised,
+  notifyPanelClosed,
   openNextMinimised,
+  registerPanelCloseHandler,
   setPanelCollapsed,
   useMinimiseOnFirstInteraction,
   usePanelCollapsed,
@@ -70,5 +72,21 @@ describe('useMinimiseOnFirstInteraction', () => {
 
     rerender({ enabled: true, v: viewer });
     expect(Object.keys(viewer.handlers)).toEqual(['canvas-drag', 'canvas-scroll', 'canvas-pinch', 'canvas-click']);
+  });
+});
+
+describe('registerPanelCloseHandler', () => {
+  it("tells a window's map, and only it, that its panel was closed, until it unregisters", () => {
+    const onClose = vi.fn();
+    const unregister = registerPanelCloseHandler('closing', onClose);
+
+    notifyPanelClosed('another');
+    expect(onClose).not.toHaveBeenCalled();
+    notifyPanelClosed('closing');
+    expect(onClose).toHaveBeenCalledTimes(1);
+
+    unregister();
+    notifyPanelClosed('closing');
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });

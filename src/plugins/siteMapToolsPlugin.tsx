@@ -25,6 +25,7 @@ import {
 } from './poiPreviewPlugin';
 import { openNextMinimised, PANEL_LABELS, setPanelCollapsed, usePanelCollapsed } from './sitePanelState';
 import { pinLabel } from './sitePins';
+import { getTourNumbers } from './tourOrder';
 
 // Read by screen readers only (the usual visually-hidden recipe).
 const VISUALLY_HIDDEN = {
@@ -225,7 +226,7 @@ export const siteMapToolsPlugin = {
   mode: 'wrap',
   component: SiteMapTools,
   mapStateToProps: (state: unknown, { windowId }: { windowId: string }) => {
-    const config = getConfig(state) as { language?: string; maps?: { site?: boolean } };
+    const config = getConfig(state) as { language?: string; maps?: { numberPins?: boolean; site?: boolean } };
     const previewId = getPreviewCompanionWindowId(state, windowId);
     const preview = previewId
       ? (getCompanionWindow(state, { companionWindowId: previewId }) as
@@ -240,14 +241,15 @@ export const siteMapToolsPlugin = {
     const journeyId = selected?.['dbf:journey']?.id;
     const stops = journeyId ? getOrderedJourneyPois(items, journeyId) : [];
     const stopIndex = selected ? stops.findIndex((stop) => stop.id === selected.id) : -1;
+    // As the pin says it: its place in the journey, or in the whole tour on a map that numbers
+    // every pin (`numberPins`).
+    const tourNumbers = config.maps?.numberPins === true ? getTourNumbers(items) : null;
+    const tourNumber = selected ? tourNumbers?.get(selected.id) : undefined;
+    let stop: { count: number; number: number } | null = null;
+    if (tourNumbers && tourNumber != null) stop = { count: tourNumbers.size, number: tourNumber };
+    else if (!tourNumbers && stopIndex >= 0) stop = { count: stops.length, number: stopIndex + 1 };
     return {
-      announcement: selected
-        ? pinLabel(
-            textBody(selected, locale, 'identifying'),
-            stopIndex >= 0 ? { count: stops.length, number: stopIndex + 1 } : null,
-            locale
-          )
-        : '',
+      announcement: selected ? pinLabel(textBody(selected, locale, 'identifying'), stop, locale) : '',
       hasMapInfo: getMapInfo(state, windowId, locale) !== null,
       locale,
       panelPosition: position === 'right' || position === 'bottom' ? position : null,

@@ -160,4 +160,28 @@ describe('useSitePins', () => {
     renderHook(() => useSitePins({ enabled: false, labels, onSelect: vi.fn(), resources, viewer }));
     expect(viewer.addOverlay).toHaveBeenCalledTimes(3);
   });
+
+  it('marks the pin of a POI that opens an image of its own, and says so (AlMadar-Digital/platform#549)', () => {
+    const viewer = fakeViewer();
+    renderHook(() => useSitePins({ enabled: true, labels, nestedIds: new Set(['c']), onSelect: vi.fn(), resources, viewer }));
+
+    const buttons = viewer.overlays.map((anchor) => anchor.querySelector('button.dbf-map-pin'));
+    expect(buttons.map((button) => button.dataset.kind)).toEqual(['poi', 'poi', 'nested']);
+    expect(buttons[2]).toHaveAttribute('aria-label', 'Mount, opens another image');
+    expect(pinLabel('التاج', { count: 4, number: 2 }, 'ar', { nested: true })).toBe('التاج، المحطة 2 من 4، يفتح صورة أخرى');
+  });
+
+  it('numbers every pin by the tour when the map numbers them all (AlMadar-Digital/platform#549)', () => {
+    const viewer = fakeViewer();
+    const numbers = new Map([
+      ['c', 1],
+      ['a', 2],
+      ['b', 3],
+    ]);
+    renderHook(() => useSitePins({ enabled: true, labels, numbers, onSelect: vi.fn(), resources, viewer }));
+
+    const buttons = viewer.overlays.map((anchor) => anchor.querySelector('button.dbf-map-pin'));
+    expect(buttons.map((button) => button.dataset.number)).toEqual(['2', '3', '1']);
+    expect(buttons[2]).toHaveAttribute('aria-label', 'Mount, stop 1 of 3');
+  });
 });

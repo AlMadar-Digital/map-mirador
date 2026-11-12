@@ -278,4 +278,68 @@ describe('useFillView', () => {
       expect(focusOnPoint).not.toHaveBeenCalled();
     });
   });
+
+  describe('returnToOpeningView (AlMadar-Digital/platform#549)', () => {
+    /** A filled map the visitor has then moved, and what returning calls */
+    const moved = async (extra) => {
+      const { renderHook } = await import('@testing-library/react');
+      const { returnToOpeningView, useFillView } = await import('../../../src/plugins/fillView.ts');
+      const viewer = fakeViewer();
+      const focusOnPoint = vi.fn();
+      const halfwayToPoint = vi.fn();
+      renderHook(() => useFillView({ enabled: true, focusOnPoint, halfwayToPoint, points: [], viewer, ...extra }));
+      viewer.handlers['tile-loaded']();
+      const filled = { ...viewer.view };
+      // What opening the map called is not what returning to it calls.
+      focusOnPoint.mockClear();
+      halfwayToPoint.mockClear();
+      viewer.viewport.fitBounds.mockClear();
+      viewer.view.center = { x: 5, y: 5 };
+      viewer.view.zoom = filled.zoom * 3;
+      return { filled, focusOnPoint, halfwayToPoint, returnToOpeningView, viewer };
+    };
+
+    it('animates a moved map back to the fill, and only its own window', async () => {
+      const { filled, returnToOpeningView, viewer } = await moved({ windowId: 'back-fill' });
+
+      returnToOpeningView('some-other-window');
+      expect(viewer.viewport.fitBounds).not.toHaveBeenCalled();
+
+      returnToOpeningView('back-fill');
+      expect(viewer.viewport.fitBounds).toHaveBeenCalledTimes(1);
+      // Animated: not the `immediately` the opening fill is applied with.
+      expect(viewer.viewport.fitBounds.mock.calls[0][1]).toBeUndefined();
+      expect(viewer.view).toEqual(filled);
+    });
+
+    it("zooms on to the host's opening view once the fill is reached", async () => {
+      const first = { x: 400, y: 300 };
+      const { focusOnPoint, returnToOpeningView, viewer } = await moved({
+        firstPoint: first,
+        initialView: 'firstPoi',
+        points: [first],
+        windowId: 'back-first',
+      });
+
+      returnToOpeningView('back-first');
+      expect(focusOnPoint).not.toHaveBeenCalled();
+      viewer.handlers['animation-finish']();
+      expect(focusOnPoint).toHaveBeenCalledWith(first);
+    });
+
+    it('leaves the map where a visitor took it on the way back', async () => {
+      const first = { x: 400, y: 300 };
+      const { halfwayToPoint, returnToOpeningView, viewer } = await moved({
+        firstPoint: first,
+        initialView: 'halfway',
+        points: [first],
+        windowId: 'back-interrupted',
+      });
+
+      returnToOpeningView('back-interrupted');
+      viewer.view.center = { x: 9, y: 9 };
+      viewer.handlers['animation-finish']();
+      expect(halfwayToPoint).not.toHaveBeenCalled();
+    });
+  });
 });

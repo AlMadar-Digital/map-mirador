@@ -106,6 +106,13 @@ export const fillViewBounds = (bounds: Rect, container: { x: number; y: number }
   return { height, width, x: centerX - width / 2, y: centerY - height / 2 };
 };
 
+// Each window's way back to the view its map opened with, for a panel that closes
+// (AlMadar-Digital/platform#549).
+const openingViews = new Map<string, () => void>();
+
+/** Animates the window's map back to the view it opened with. */
+export const returnToOpeningView = (windowId: string) => openingViews.get(windowId)?.();
+
 type Viewer = {
   addOnceHandler: (name: string, handler: () => void) => void;
   removeHandler: (name: string, handler: () => void) => void;
@@ -198,6 +205,43 @@ export const useFillView = ({
       if (!hasPendingParentViewport(windowId)) viewer.addOnceHandler('tile-loaded', fill);
     };
     viewer.world.addHandler('add-item', onAddItem);
+    // Back to the opening view, animated this time: the fill, then the host's zoom on from it,
+    // as when the map opened.
+    const isAt = (bounds: Rect) => {
+      const center = viewer.viewport.getCenter(true);
+      const zoom = viewer.viewport.getZoom(true);
+      // OpenSeadragon's zoom is the inverse of the viewport's width in viewport units.
+      const fillZoom = 1 / bounds.width;
+      return (
+        Math.abs(zoom - fillZoom) <= fillZoom * 1e-3 &&
+        Math.hypot(center.x - (bounds.x + bounds.width / 2), center.y - (bounds.y + bounds.height / 2)) <= bounds.width * 1e-3
+      );
+    };
+    let zoomOn: (() => void) | null = null;
+    const reopen = () => {
+      const item = viewer.world.getItemAt(0);
+      if (!item) return;
+      const current = latest.current;
+      const bounds = fillViewBounds(item.getBounds(), viewer.viewport.getContainerSize(), current.points);
+      if (zoomOn) viewer.removeHandler('animation-finish', zoomOn);
+      const point = current.initialView === 'fill' ? null : current.firstPoint;
+      zoomOn = () => {
+        zoomOn = null;
+        // Only from the fill: a visitor who took the map elsewhere on the way keeps it.
+        if (!point || !isAt(bounds)) return;
+        if (latest.current.initialView === 'firstPoi') latest.current.focusOnPoint?.(point);
+        else latest.current.halfwayToPoint?.(point);
+      };
+      // Already filling the view: no animation is coming to wait for.
+      if (isAt(bounds)) {
+        zoomOn();
+        return;
+      }
+      if (point) viewer.addOnceHandler('animation-finish', zoomOn);
+      else zoomOn = null;
+      viewer.viewport.fitBounds(new OpenSeadragon.Rect(bounds.x, bounds.y, bounds.width, bounds.height));
+    };
+    openingViews.set(windowId, reopen);
     // The map's image may be in already when this mounts - all its tiles even, in which case no
     // `tile-loaded` is coming, so it fills straight away.
     const shown = viewer.world.getItemAt(0);
@@ -209,6 +253,8 @@ export const useFillView = ({
       cancelAnimationFrame(frame);
       viewer.world.removeHandler('add-item', onAddItem);
       viewer.removeHandler('tile-loaded', fill);
+      if (zoomOn) viewer.removeHandler('animation-finish', zoomOn);
+      if (openingViews.get(windowId) === reopen) openingViews.delete(windowId);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `storeViewport` is a bound action creator
   }, [enabled, viewer, windowId]);

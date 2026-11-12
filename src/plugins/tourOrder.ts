@@ -46,3 +46,11 @@ export const getTourPois = <T extends OrderedAnnotation>(items: T[]): T[] => {
 
   return topLevel.flatMap((item) => (item['dbf:kind'] === 'Journey' ? stopsOf(item.id) : [item]));
 };
+
+/**
+ * Each POI's number in the tour, from 1: what every pin and journey card shows on a map that
+ * numbers all its POIs (MapViewer's `numberPins`, AlMadar-Digital/platform#549), rather than each
+ * journey's stops alone.
+ */
+export const getTourNumbers = <T extends OrderedAnnotation>(items: T[]): Map<string, number> =>
+  new Map(getTourPois(items).map((poi, index) => [poi.id, index + 1]));

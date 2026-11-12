@@ -2,7 +2,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import PropTypes from 'prop-types';
 import { MAP_INFO_ID, mediaImageUrl, poiPreviewPlugins } from '../../../src/plugins/poiPreviewPlugin.tsx';
-import { resetSheet } from '../../../src/plugins/sitePanelState.ts';
+import { registerPanelCloseHandler, resetSheet } from '../../../src/plugins/sitePanelState.ts';
 
 // Only the preview's own content is under test here, not Mirador's companion window chrome.
 vi.mock('../../../src/index', async (importOriginal) => {
@@ -42,6 +42,17 @@ describe('poiPreviewPlugin site preset', () => {
       companionWindows: { cw: { annotationid: 'poi' } },
       config: { language: 'en', maps },
       windows: { window: {} },
+    });
+
+    it('gives the tour numbers only to a map that numbers every pin (AlMadar-Digital/platform#549)', () => {
+      expect(
+        mapStateToProps(state({ numberPins: true, site: true }), { id: 'cw', windowId: 'window' }).tourNumbers,
+      ).toBeInstanceOf(Map);
+      expect(mapStateToProps(state({ site: true }), { id: 'cw', windowId: 'window' }).tourNumbers).toBeNull();
+      expect(
+        poiPreviewPlugins[1].mapStateToProps(state({ numberPins: true, site: true }), { windowId: 'window' }).numberPins,
+      ).toBe(true);
+      expect(poiPreviewPlugins[1].mapStateToProps(state({ site: true }), { windowId: 'window' }).numberPins).toBe(false);
     });
 
     it('is on only when the config asks for it', () => {
@@ -110,6 +121,57 @@ describe('poiPreviewPlugin site preset', () => {
 
       expect(selectAnnotation).toHaveBeenCalledWith('window', 'b');
     });
+
+    it('is not a pointer target itself: pressing a card selects nothing (AlMadar-Digital/platform#549)', async () => {
+      const selectAnnotation = vi.fn();
+      const { container } = render(
+        <PreviewContent
+          annotation={journey}
+          id="cw"
+          journeyPois={pois}
+          locale="en"
+          position="right"
+          removeCompanionWindow={vi.fn()}
+          selectAnnotation={selectAnnotation}
+          site
+          windowId="window"
+        />,
+      );
+
+      /* eslint-disable testing-library/no-container, testing-library/no-node-access -- the class names are the contract */
+      const card = container.querySelectorAll('.dbf-map-poi')[1];
+      await userEvent.click(card.querySelector('.dbf-map-poi__text'));
+      /* eslint-enable testing-library/no-container, testing-library/no-node-access */
+
+      expect(card).not.toHaveAttribute('data-action');
+      expect(selectAnnotation).not.toHaveBeenCalled();
+    });
+
+    it('numbers its stops by the tour on a map that numbers every pin (AlMadar-Digital/platform#549)', () => {
+      const { container } = render(
+        <PreviewContent
+          annotation={journey}
+          id="cw"
+          journeyPois={pois}
+          locale="en"
+          position="right"
+          removeCompanionWindow={vi.fn()}
+          selectAnnotation={vi.fn()}
+          site
+          tourNumbers={
+            new Map([
+              ['a', 3],
+              ['b', 4],
+            ])
+          }
+          windowId="window"
+        />,
+      );
+
+      // eslint-disable-next-line testing-library/no-container, testing-library/no-node-access -- the class name is the contract
+      const markers = [...container.querySelectorAll('.dbf-map-poi__marker')].map((marker) => marker.textContent);
+      expect(markers).toEqual(['3', '4']);
+    });
   });
 
   describe('panel', () => {
@@ -134,6 +196,33 @@ describe('poiPreviewPlugin site preset', () => {
       await userEvent.click(screen.getByRole('button', { name: 'إغلاق اللوحة' }));
 
       expect(removeCompanionWindow).toHaveBeenCalledWith('window', 'cw');
+    });
+
+    it('tells the map when it is closed, so the selection clears and the view returns (AlMadar-Digital/platform#549)', async () => {
+      const removeCompanionWindow = vi.fn();
+      const onClose = vi.fn();
+      const unregister = registerPanelCloseHandler('closing-window', onClose);
+      render(
+        <PreviewContent
+          annotation={journey}
+          id="cw"
+          journeyPois={[stop('a', 'The Start', 1)]}
+          locale="en"
+          position="right"
+          removeCompanionWindow={removeCompanionWindow}
+          selectAnnotation={vi.fn()}
+          selectedAnnotationId="a"
+          site
+          windowId="closing-window"
+        />,
+      );
+
+      await userEvent.click(screen.getByRole('button', { name: 'Close panel' }));
+
+      expect(onClose).toHaveBeenCalledTimes(1);
+      // Nothing animates the panel here, so it is removed at once.
+      expect(removeCompanionWindow).toHaveBeenCalledWith('closing-window', 'cw');
+      unregister();
     });
   });
 
@@ -330,6 +419,15 @@ describe('poiPreviewPlugin site preset', () => {
 
       // Selected (by a scroll, a swipe or the tour): nothing opens.
       expect(openNestedMap).not.toHaveBeenCalled();
+
+      // The card of a stop with a nested map says it opens something; the other's doesn't.
+      /* eslint-disable testing-library/no-node-access -- the attribute is the contract */
+      expect(screen.getByRole('button', { name: 'Manzil Qastal' }).closest('.dbf-map-poi')).toHaveAttribute(
+        'data-action',
+        'open',
+      );
+      expect(screen.getByRole('button', { name: 'The Start' }).closest('.dbf-map-poi')).not.toHaveAttribute('data-action');
+      /* eslint-enable testing-library/no-node-access */
 
       await userEvent.click(screen.getByRole('button', { name: 'Manzil Qastal' }));
       expect(openNestedMap).toHaveBeenCalledWith('window', 'https://example.org/nested', {

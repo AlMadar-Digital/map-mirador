@@ -100,7 +100,8 @@ const INTERACTION_EVENTS = ['canvas-drag', 'canvas-scroll', 'canvas-pinch', 'can
 /**
  * Minimises the panel on the visitor's first interaction with the map (a drag, wheel, pinch or
  * click), if it is showing "Discover the map" then (D11) - once per viewer. A tour step that
- * selects a POI reopens the panel on it.
+ * selects a POI reopens the panel on it. The caller enables it for the phone's sheet only: beside
+ * the map, the side panel stays open until the visitor closes it (AlMadar-Digital/platform#549).
  */
 export const useMinimiseOnFirstInteraction = (
   viewer: EventSource | null | undefined,
@@ -124,6 +125,21 @@ export const useMinimiseOnFirstInteraction = (
     return () => INTERACTION_EVENTS.forEach((name) => viewer.removeHandler(name, minimise));
   }, [enabled, viewer, windowId]);
 };
+
+// What closing the panel does to the map, registered by the map's overlay (poiPreviewPlugin.tsx),
+// which holds the selection and the viewport: it clears the selection and takes the map back to
+// its opening view (AlMadar-Digital/platform#549). Collapsing the panel behind its tab does not.
+const panelCloseHandlers = new Map<string, () => void>();
+
+export const registerPanelCloseHandler = (windowId: string, onClose: () => void) => {
+  panelCloseHandlers.set(windowId, onClose);
+  return () => {
+    if (panelCloseHandlers.get(windowId) === onClose) panelCloseHandlers.delete(windowId);
+  };
+};
+
+/** Tells the window's map its panel was closed (its close button, or Escape). */
+export const notifyPanelClosed = (windowId: string) => panelCloseHandlers.get(windowId)?.();
 
 // A pin pressed from the keyboard moves focus into the panel it opens (T-37); a mouse click
 // leaves focus where it is.

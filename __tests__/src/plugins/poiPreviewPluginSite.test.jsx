@@ -734,11 +734,19 @@ describe('poiPreviewPlugin site preset', () => {
       expect(screen.queryByRole('link')).not.toBeInTheDocument();
     });
 
-    it('does not select the stop when a caption link is followed', async () => {
+    // Only a stop that opens a nested map has a clickable card (AlMadar-Digital/platform#549):
+    // a link inside it must not open that map too.
+    it("does not open the stop's nested map when a caption link is followed", async () => {
+      const openNestedMap = vi.fn();
       const selectAnnotation = vi.fn();
       const stopWithMedia = {
         ...stop('a', 'Cairo', 1),
-        'dbf:mediaEn': { ...image, work: { title: 'Book of Roger', url: '/en/objects/25-G2-06-0343' } },
+        'dbf:linkedMap': { id: 'nested-doc', manifestId: 'https://example.org/nested' },
+        'dbf:mediaEn': {
+          ...image,
+          rightsStatement: { label: 'In Copyright', uri: 'https://rightsstatements.org/vocab/InC/1.0/' },
+          work: { title: 'Book of Roger', url: '/en/objects/25-G2-06-0343' },
+        },
       };
       render(
         <PreviewContent
@@ -746,6 +754,7 @@ describe('poiPreviewPlugin site preset', () => {
           id="cw"
           journeyPois={[stopWithMedia, stop('b', 'Luxor', 2)]}
           locale="en"
+          openNestedMap={openNestedMap}
           position="right"
           removeCompanionWindow={vi.fn()}
           selectAnnotation={selectAnnotation}
@@ -753,13 +762,22 @@ describe('poiPreviewPlugin site preset', () => {
           windowId="window"
         />,
       );
-      const link = screen.getByRole('link', { name: 'Object details: Book of Roger' });
-      // jsdom cannot navigate: keep the click from trying to.
-      link.addEventListener('click', (event) => event.preventDefault());
+      const links = [
+        screen.getByRole('link', { name: 'Object details: Book of Roger' }),
+        screen.getByRole('link', { name: 'In Copyright' }),
+      ];
+      // jsdom cannot navigate: keep the clicks from trying to.
+      links.forEach((link) => link.addEventListener('click', (event) => event.preventDefault()));
 
-      await userEvent.click(link);
+      await userEvent.click(links[0]);
+      await userEvent.click(links[1]);
 
+      expect(openNestedMap).not.toHaveBeenCalled();
       expect(selectAnnotation).not.toHaveBeenCalled();
+
+      // The card itself still opens the map.
+      await userEvent.click(screen.getByRole('button', { name: 'Cairo' }));
+      expect(openNestedMap).toHaveBeenCalledTimes(1);
     });
   });
 });

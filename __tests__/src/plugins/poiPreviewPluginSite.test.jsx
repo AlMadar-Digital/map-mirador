@@ -226,6 +226,94 @@ describe('poiPreviewPlugin site preset', () => {
     });
   });
 
+  describe('one panel for whatever it shows (AlMadar-Digital/platform#549)', () => {
+    const pois = [stop('a', 'The Start', 1), stop('b', 'Manzil Qastal', 2)];
+    const lonePoi = (id, title) => ({ body: [text('en', 'identifying', title)], 'dbf:kind': 'POI', id });
+    const preview = (props) => (
+      <PreviewContent
+        annotation={null}
+        id="cw"
+        journeyPois={[]}
+        locale="en"
+        position="right"
+        removeCompanionWindow={vi.fn()}
+        selectAnnotation={vi.fn()}
+        site
+        windowId="window"
+        {...props}
+      />
+    );
+    /* eslint-disable testing-library/no-container, testing-library/no-node-access -- the elements themselves are under test */
+    const parts = (container) => ({
+      body: container.querySelector('.dbf-map-panel__body'),
+      content: container.querySelector('.dbf-map-panel__content'),
+      panel: container.querySelector('section'),
+    });
+
+    it('keeps the panel and gives it new content, from the introduction to a POI to a journey and back', () => {
+      const mapInfo = { summary: '', title: 'Map of the Nile' };
+      const { container, rerender } = render(preview({ mapInfo }));
+      const intro = parts(container);
+      expect(intro.content).toHaveTextContent('Map of the Nile');
+      expect(intro.content.parentElement).toBe(intro.body);
+
+      rerender(preview({ annotation: lonePoi('poi', 'The Well') }));
+      const poi = parts(container);
+      expect(poi.content).toHaveTextContent('The Well');
+
+      rerender(preview({ annotation: lonePoi('other', 'The Gate') }));
+      const otherPoi = parts(container);
+      expect(otherPoi.content).toHaveTextContent('The Gate');
+
+      rerender(preview({ annotation: journey, journeyPois: pois, selectedAnnotationId: 'a' }));
+      const tour = parts(container);
+      expect(tour.content.querySelectorAll('.dbf-map-poi')).toHaveLength(2);
+
+      rerender(preview({ mapInfo }));
+      const back = parts(container);
+
+      // The panel never changes: a new one is slid in by the host page, its tools standing still.
+      [poi, otherPoi, tour, back].forEach((shown) => {
+        expect(shown.panel).toBe(intro.panel);
+        expect(shown.body).toBe(intro.body);
+      });
+      // Its content does, each time: that is what the host fades in.
+      const contents = [intro, poi, otherPoi, tour, back].map((shown) => shown.content);
+      contents.slice(1).forEach((content, index) => expect(content).not.toBe(contents[index]));
+    });
+
+    it("keeps a journey's content from stop to stop: its cards scroll instead", () => {
+      const { container, rerender } = render(preview({ annotation: journey, journeyPois: pois, selectedAnnotationId: 'a' }));
+      const first = parts(container);
+
+      rerender(preview({ annotation: journey, journeyPois: pois, selectedAnnotationId: 'b' }));
+
+      expect(parts(container).content).toBe(first.content);
+      expect(parts(container).panel).toBe(first.panel);
+    });
+
+    it('starts new content at its top, and leaves the scroll alone from stop to stop', () => {
+      const scroller = document.createElement('div');
+      scroller.className = 'mirador-scrollto-scrollable';
+      document.body.appendChild(scroller);
+      const { rerender, unmount } = render(preview({ mapInfo: { summary: '', title: 'Map of the Nile' } }), {
+        container: scroller,
+      });
+
+      scroller.scrollTop = 120;
+      rerender(preview({ annotation: journey, journeyPois: pois, selectedAnnotationId: 'a' }));
+      expect(scroller.scrollTop).toBe(0);
+
+      scroller.scrollTop = 80;
+      rerender(preview({ annotation: journey, journeyPois: pois, selectedAnnotationId: 'b' }));
+      expect(scroller.scrollTop).toBe(80);
+
+      unmount();
+      scroller.remove();
+    });
+    /* eslint-enable testing-library/no-container, testing-library/no-node-access */
+  });
+
   describe('keyboard', () => {
     it('Escape closes the open panel before the view', () => {
       const removeCompanionWindow = vi.fn();

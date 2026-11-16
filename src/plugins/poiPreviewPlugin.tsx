@@ -1,6 +1,7 @@
 import {
   Fragment,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -843,6 +844,9 @@ type PanelPosition = 'right' | 'bottom';
 
 interface SitePanelProps {
   children: ReactNode;
+  // What the content is of: the map's introduction, a journey, a POI. The content is mounted
+  // afresh when it changes, inside a panel that stays where it is.
+  contentKey: string;
   id: string;
   label: string;
   locale: ContentLocale;
@@ -858,8 +862,15 @@ interface SitePanelProps {
 // The site preset's panel (`.dbf-map-panel*` class contract): its own header - the sheet handle
 // and label on a phone, a round close button - in place of Mirador's title bar. The host page
 // styles it; the tools in siteMapToolsPlugin.tsx collapse it.
+//
+// One panel serves whatever the preview shows (PreviewContent): going from the introduction to a
+// POI, or from a POI to a journey, changes what is in it and leaves the panel itself in place
+// (AlMadar-Digital/platform#549). Rendered by each kind of content instead, it was a new element
+// each time, which the host page slid in again while the tools beside it stood still. The host
+// can fade the new content in: `.dbf-map-panel__content` is a new element whenever it changes.
 const SitePanel = ({
   children,
+  contentKey,
   id,
   label,
   locale,
@@ -884,6 +895,16 @@ const SitePanel = ({
   const bodyRef = useRef<HTMLDivElement>(null);
   const headerRef = useRef<HTMLDivElement>(null);
   useSheetGestures({ bodyRef, enabled: isSheet, headerRef, isRtl: locale === 'ar', windowId });
+
+  // New content starts at its top, as it did in a panel of its own. A layout effect, so that a
+  // journey opened on one of its stops can then scroll to that stop's card (its own effect).
+  const shownContentRef = useRef(contentKey);
+  useLayoutEffect(() => {
+    if (shownContentRef.current === contentKey) return;
+    shownContentRef.current = contentKey;
+    const scroller = bodyRef.current?.closest<HTMLElement>('.mirador-scrollto-scrollable');
+    if (scroller) scroller.scrollTop = 0;
+  }, [contentKey]);
 
   // Opened from the keyboard: focus moves to what the panel is about - the selected stop's
   // title, else the card's title, else the panel's label (T-37).
@@ -992,7 +1013,9 @@ const SitePanel = ({
           <h2 className="dbf-map-panel__label">{label}</h2>
           <button aria-label={labels.closePanel} className="dbf-map-panel__close" onClick={close} type="button" />
         </div>
-        {children}
+        <div className="dbf-map-panel__content" key={contentKey}>
+          {children}
+        </div>
       </div>
     </CompanionWindow>
   );
@@ -1156,7 +1179,6 @@ interface JourneyPreviewContentProps {
   pois: RawAnnotation[];
   openNestedMap?: OpenNestedMap;
   position: PanelPosition;
-  removeCompanionWindow: typeof removeCompanionWindow;
   // Editor only: each stop card's own actions.
   renderStopActions?: (poi: RawAnnotation) => ReactNode;
   selectAnnotation: typeof selectAnnotation;
@@ -1177,7 +1199,6 @@ const JourneyPreviewContent = ({
   pois,
   openNestedMap: dispatchOpenNestedMap,
   position,
-  removeCompanionWindow: dispatchRemoveCompanionWindow,
   renderStopActions,
   selectAnnotation: dispatchSelectAnnotation,
   selectedAnnotationId,
@@ -1305,72 +1326,62 @@ const JourneyPreviewContent = ({
     // title is its keyboard target; the card itself is a pointer target only when it opens the
     // stop's own image (`data-action="open"`, AlMadar-Digital/platform#549) - otherwise scrolling
     // to a card or pressing its pin selects it. The marker carries the stop's number.
+    // The panel around them is PreviewContent's.
     return (
-      <SitePanel
-        id={id}
-        label={labels.followJourney}
-        locale={locale}
-        position={position}
-        removeCompanionWindow={dispatchRemoveCompanionWindow}
-        returnFocusTo={selectedAnnotationId}
-        showing={`${journey.id}:${selectedAnnotationId ?? ''}`}
-        windowId={windowId}
-      >
-        <div className="dbf-map-panel__list" ref={stopsRef}>
-          {pois.length === 0 && <p>{labels.noStops}</p>}
-          {pois.flatMap((poi, index) => {
-            const poiTitle = textBody(poi, locale, 'identifying');
-            const description = sanitizeDescription(textBody(poi, locale, 'describing'));
-            const media = mediaForLocale(poi, locale);
-            const isSelected = poi.id === selectedAnnotationId;
-            const opensNestedMap = !!nestedMapOf(poi);
-            const card = (
-              // eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-noninteractive-element-interactions -- the title button is the keyboard target
-              <article
-                className="dbf-map-poi"
-                data-action={opensNestedMap ? 'open' : undefined}
-                data-poi-id={poi.id}
-                data-selected={isSelected ? 'true' : undefined}
-                data-variant="stop"
-                key={poi.id}
-                onClick={opensNestedMap ? () => focusPoi(poi) : undefined}
-              >
-                <div className="dbf-map-poi__header">
-                  <span className="dbf-map-poi__marker">{stopNumbers?.get(poi.id) ?? index + 1}</span>
-                  <div className="dbf-map-poi__heading">
-                    {(eyebrowFor(poi, locale) || journeyTitle) && (
-                      <p className="dbf-map-poi__eyebrow">{eyebrowFor(poi, locale) || journeyTitle}</p>
-                    )}
-                    <h3 className="dbf-map-poi__title">
-                      <button
-                        aria-current={isSelected || undefined}
-                        className="dbf-map-poi__select"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          focusPoi(poi);
-                        }}
-                        type="button"
-                      >
-                        {poiTitle || '—'}
-                      </button>
-                    </h3>
-                  </div>
+      <div className="dbf-map-panel__list" ref={stopsRef}>
+        {pois.length === 0 && <p>{labels.noStops}</p>}
+        {pois.flatMap((poi, index) => {
+          const poiTitle = textBody(poi, locale, 'identifying');
+          const description = sanitizeDescription(textBody(poi, locale, 'describing'));
+          const media = mediaForLocale(poi, locale);
+          const isSelected = poi.id === selectedAnnotationId;
+          const opensNestedMap = !!nestedMapOf(poi);
+          const card = (
+            // eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-noninteractive-element-interactions -- the title button is the keyboard target
+            <article
+              className="dbf-map-poi"
+              data-action={opensNestedMap ? 'open' : undefined}
+              data-poi-id={poi.id}
+              data-selected={isSelected ? 'true' : undefined}
+              data-variant="stop"
+              key={poi.id}
+              onClick={opensNestedMap ? () => focusPoi(poi) : undefined}
+            >
+              <div className="dbf-map-poi__header">
+                <span className="dbf-map-poi__marker">{stopNumbers?.get(poi.id) ?? index + 1}</span>
+                <div className="dbf-map-poi__heading">
+                  {(eyebrowFor(poi, locale) || journeyTitle) && (
+                    <p className="dbf-map-poi__eyebrow">{eyebrowFor(poi, locale) || journeyTitle}</p>
+                  )}
+                  <h3 className="dbf-map-poi__title">
+                    <button
+                      aria-current={isSelected || undefined}
+                      className="dbf-map-poi__select"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        focusPoi(poi);
+                      }}
+                      type="button"
+                    >
+                      {poiTitle || '—'}
+                    </button>
+                  </h3>
                 </div>
-                <SiteMedia locale={locale} media={media} poiTitle={poiTitle} />
-                {description && (
-                  // eslint-disable-next-line react/no-danger -- sanitised above
-                  <div className="dbf-map-poi__text" dangerouslySetInnerHTML={{ __html: description }} />
-                )}
-              </article>
-            );
-            return index === 0
-              ? [card]
-              : [<span aria-hidden className="dbf-map-poi__divider" key={`divider-${poi.id}`} />, card];
-          })}
-          {/* Room for the last stops to scroll to the top when selected - see scrollCardToTop. */}
-          <div aria-hidden ref={spacerRef} style={{ height: 0 }} />
-        </div>
-      </SitePanel>
+              </div>
+              <SiteMedia locale={locale} media={media} poiTitle={poiTitle} />
+              {description && (
+                // eslint-disable-next-line react/no-danger -- sanitised above
+                <div className="dbf-map-poi__text" dangerouslySetInnerHTML={{ __html: description }} />
+              )}
+            </article>
+          );
+          return index === 0
+            ? [card]
+            : [<span aria-hidden className="dbf-map-poi__divider" key={`divider-${poi.id}`} />, card];
+        })}
+        {/* Room for the last stops to scroll to the top when selected - see scrollCardToTop. */}
+        <div aria-hidden ref={spacerRef} style={{ height: 0 }} />
+      </div>
     );
   }
 
@@ -1485,8 +1496,6 @@ interface PoiPreviewContentProps {
   linkedMapManifestId: string | null;
   locale: ContentLocale;
   openNestedMap: OpenNestedMap;
-  position: PanelPosition;
-  removeCompanionWindow: typeof removeCompanionWindow;
   windowId: string;
 }
 
@@ -1500,8 +1509,6 @@ const PoiPreviewContent = ({
   loading = false,
   locale,
   openNestedMap: dispatchOpenNestedMap,
-  position,
-  removeCompanionWindow: dispatchRemoveCompanionWindow,
   site = false,
   windowId,
 }: PoiPreviewContentProps) => {
@@ -1524,17 +1531,9 @@ const PoiPreviewContent = ({
   }, [annotation?.id, point?.x, point?.y, windowId]);
 
   if (site) {
+    // The panel around it is PreviewContent's.
     return (
-      <SitePanel
-        id={id}
-        label={labels.discover}
-        locale={locale}
-        position={position}
-        removeCompanionWindow={dispatchRemoveCompanionWindow}
-        returnFocusTo={carried ? null : annotation?.id}
-        showing={annotation?.id ?? ''}
-        windowId={windowId}
-      >
+      <>
         {!annotation && !loading && <p className="dbf-map-error">{labels.notFound}</p>}
         {annotation && (
           <article className="dbf-map-poi" data-selected="true" data-variant="single">
@@ -1554,7 +1553,7 @@ const PoiPreviewContent = ({
             )}
           </article>
         )}
-      </SitePanel>
+      </>
     );
   }
 
@@ -1591,46 +1590,25 @@ const PoiPreviewContent = ({
 };
 
 interface MapInfoContentProps {
-  id: string;
-  locale: ContentLocale;
   mapInfo: MapInfo;
-  position: PanelPosition;
-  removeCompanionWindow: typeof removeCompanionWindow;
-  windowId: string;
 }
 
-// "Discover the map": the map's own title and description, shown while no POI is selected.
-const MapInfoContent = ({
-  id,
-  locale,
-  mapInfo,
-  position,
-  removeCompanionWindow: dispatchRemoveCompanionWindow,
-  windowId,
-}: MapInfoContentProps) => {
+// "Discover the map": the map's own title and description, shown while no POI is selected. In
+// the site's panel, which is PreviewContent's.
+const MapInfoContent = ({ mapInfo }: MapInfoContentProps) => {
   const summary = sanitizeDescription(mapInfo.summary);
   return (
-    <SitePanel
-      id={id}
-      label={LABELS[locale].discover}
-      locale={locale}
-      position={position}
-      removeCompanionWindow={dispatchRemoveCompanionWindow}
-      showing={MAP_INFO_ID}
-      windowId={windowId}
-    >
-      <article className="dbf-map-poi" data-variant="map">
-        <div className="dbf-map-poi__header">
-          <div className="dbf-map-poi__heading">
-            <h3 className="dbf-map-poi__title">{mapInfo.title}</h3>
-          </div>
+    <article className="dbf-map-poi" data-variant="map">
+      <div className="dbf-map-poi__header">
+        <div className="dbf-map-poi__heading">
+          <h3 className="dbf-map-poi__title">{mapInfo.title}</h3>
         </div>
-        {summary && (
-          // eslint-disable-next-line react/no-danger -- sanitised above
-          <div className="dbf-map-poi__text" dangerouslySetInnerHTML={{ __html: summary }} />
-        )}
-      </article>
-    </SitePanel>
+      </div>
+      {summary && (
+        // eslint-disable-next-line react/no-danger -- sanitised above
+        <div className="dbf-map-poi__text" dangerouslySetInnerHTML={{ __html: summary }} />
+      )}
+    </article>
   );
 };
 
@@ -1735,21 +1713,14 @@ const PreviewContent = ({
     />
   );
 
+  let content: ReactNode;
+  // What the site's panel is told about its content (SitePanel).
+  let panel: Pick<SitePanelProps, 'contentKey' | 'label' | 'returnFocusTo' | 'showing'>;
   if (site && mapInfo) {
-    return (
-      <MapInfoContent
-        id={id}
-        locale={locale}
-        mapInfo={mapInfo}
-        position={position}
-        removeCompanionWindow={dispatchRemoveCompanionWindow}
-        windowId={windowId}
-      />
-    );
-  }
-
-  if (annotation && annotation['dbf:kind'] === 'Journey') {
-    return (
+    content = <MapInfoContent mapInfo={mapInfo} />;
+    panel = { contentKey: MAP_INFO_ID, label: LABELS[locale].discover, showing: MAP_INFO_ID };
+  } else if (annotation && annotation['dbf:kind'] === 'Journey') {
+    content = (
       <JourneyPreviewContent
         editorToolbar={editorToolbar}
         id={id}
@@ -1758,7 +1729,6 @@ const PreviewContent = ({
         openNestedMap={dispatchOpenNestedMap}
         pois={journeyPois}
         position={position}
-        removeCompanionWindow={dispatchRemoveCompanionWindow}
         renderStopActions={renderStopActions || undefined}
         selectAnnotation={dispatchSelectAnnotation}
         selectedAnnotationId={selectedAnnotationId}
@@ -1768,23 +1738,51 @@ const PreviewContent = ({
         windowId={windowId}
       />
     );
+    // One content for the whole journey: going from stop to stop scrolls its cards.
+    panel = {
+      contentKey: annotation.id,
+      label: LABELS[shownLocale].followJourney,
+      returnFocusTo: selectedAnnotationId,
+      showing: `${annotation.id}:${selectedAnnotationId ?? ''}`,
+    };
+  } else {
+    content = (
+      <PoiPreviewContent
+        annotation={annotation}
+        carried={carried}
+        editorToolbar={editorToolbar}
+        id={id}
+        journeyLink={journeyLink || null}
+        linkedMapManifestId={linkedMapManifestId}
+        loading={loading}
+        locale={shownLocale}
+        openNestedMap={dispatchOpenNestedMap}
+        site={site}
+        windowId={windowId}
+      />
+    );
+    panel = {
+      contentKey: annotation?.id ?? '',
+      label: LABELS[shownLocale].discover,
+      returnFocusTo: carried ? null : annotation?.id,
+      showing: annotation?.id ?? '',
+    };
   }
+
+  // The editor's previews bring their own companion window; the site's share one panel, so that
+  // a change of content leaves the panel in place (AlMadar-Digital/platform#549).
+  if (!site) return content;
   return (
-    <PoiPreviewContent
-      annotation={annotation}
-      carried={carried}
-      editorToolbar={editorToolbar}
+    <SitePanel
+      {...panel}
       id={id}
-      journeyLink={journeyLink || null}
-      linkedMapManifestId={linkedMapManifestId}
-      loading={loading}
       locale={shownLocale}
-      openNestedMap={dispatchOpenNestedMap}
       position={position}
       removeCompanionWindow={dispatchRemoveCompanionWindow}
-      site={site}
       windowId={windowId}
-    />
+    >
+      {content}
+    </SitePanel>
   );
 };
 

@@ -132,29 +132,42 @@ export const MAP_CLICK_DELAY_MS = 350;
 
 /**
  * A click on the map itself, for the site preset (AlMadar-Digital/platform#481). Returns the
- * handler to give the map's overlay, the same one on every render. `onClick` runs once the click
- * has turned out not to be the first of a double click: that zooms the map
- * (`osdConfig.zoomPerDoubleClick`), and is not two clicks on it.
+ * handler to give the map's overlay and a way to drop a click still waiting, the same two on
+ * every render.
+ *
+ * `onClick` runs once the click has turned out not to be the first of a double click: that zooms
+ * the map (`osdConfig.zoomPerDoubleClick`), and is not two clicks on it. It does not run if the
+ * visitor has moved on meanwhile - picked a pin, stepped the tour, opened a nested map: `stateKey`
+ * names what is selected and shown, and a click only counts for the state it was made in.
  */
-export const useMapClick = (viewer: EventSource | null | undefined, enabled: boolean, onClick: () => void) => {
-  const onClickRef = useRef(onClick);
+export const useMapClick = (
+  viewer: EventSource | null | undefined,
+  enabled: boolean,
+  onClick: () => void,
+  stateKey = ''
+) => {
+  const latestRef = useRef({ onClick, stateKey });
   useEffect(() => {
-    onClickRef.current = onClick;
+    latestRef.current = { onClick, stateKey };
   });
   const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const cancel = useCallback(() => clearTimeout(timerRef.current), []);
   useEffect(() => {
     if (!enabled || !viewer) return undefined;
-    const cancel = () => clearTimeout(timerRef.current);
     viewer.addHandler('canvas-double-click', cancel);
     return () => {
       cancel();
       viewer.removeHandler('canvas-double-click', cancel);
     };
-  }, [enabled, viewer]);
-  return useCallback(() => {
+  }, [cancel, enabled, viewer]);
+  const onMapClick = useCallback(() => {
     clearTimeout(timerRef.current);
-    timerRef.current = setTimeout(() => onClickRef.current(), MAP_CLICK_DELAY_MS);
+    const clickedIn = latestRef.current.stateKey;
+    timerRef.current = setTimeout(() => {
+      if (latestRef.current.stateKey === clickedIn) latestRef.current.onClick();
+    }, MAP_CLICK_DELAY_MS);
   }, []);
+  return [onMapClick, cancel] as const;
 };
 
 // What closing the panel does to the map, registered by the map's overlay (poiPreviewPlugin.tsx),

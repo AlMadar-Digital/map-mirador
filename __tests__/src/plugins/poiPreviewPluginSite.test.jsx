@@ -326,19 +326,20 @@ describe('poiPreviewPlugin site preset', () => {
     }
     OverlayStub.propTypes = { onMapClick: PropTypes.func };
 
+    const overlay = (clearMapSelection, { selectedAnnotationId = null, ...props }) => (
+      <MapOverlay
+        TargetComponent={OverlayStub}
+        addCompanionWindow={vi.fn()}
+        clearMapSelection={clearMapSelection}
+        targetProps={{ selectedAnnotationId, windowId: 'clicked-window' }}
+        updateCompanionWindow={vi.fn()}
+        {...props}
+      />
+    );
     const renderOverlay = (props) => {
       const clearMapSelection = vi.fn();
-      render(
-        <MapOverlay
-          TargetComponent={OverlayStub}
-          addCompanionWindow={vi.fn()}
-          clearMapSelection={clearMapSelection}
-          targetProps={{ windowId: 'clicked-window' }}
-          updateCompanionWindow={vi.fn()}
-          {...props}
-        />,
-      );
-      return clearMapSelection;
+      const { rerender } = render(overlay(clearMapSelection, props));
+      return Object.assign(clearMapSelection, { rerender: (next) => rerender(overlay(clearMapSelection, next)) });
     };
 
     afterEach(() => vi.useRealTimers());
@@ -354,6 +355,31 @@ describe('poiPreviewPlugin site preset', () => {
       expect(clearMapSelection).toHaveBeenCalledTimes(1);
       expect(clearMapSelection).toHaveBeenCalledWith('clicked-window');
       expect(mapDispatchToProps.clearMapSelection).toBeTypeOf('function');
+    });
+
+    it('leaves alone a POI picked, or a panel opened, right after the click', () => {
+      vi.useFakeTimers();
+      const shown = { previewAnnotationId: 'journey', selectedAnnotationId: 'stop-1', site: true };
+      const clearMapSelection = renderOverlay(shown);
+
+      // Another stop is selected 100ms after the click on the map.
+      fireEvent.click(screen.getByRole('button', { name: 'the map' }));
+      vi.advanceTimersByTime(100);
+      clearMapSelection.rerender({ ...shown, selectedAnnotationId: 'stop-2' });
+      vi.advanceTimersByTime(MAP_CLICK_DELAY_MS);
+      expect(clearMapSelection).not.toHaveBeenCalled();
+
+      // The panel moves on to another POI's, the selection aside.
+      fireEvent.click(screen.getByRole('button', { name: 'the map' }));
+      vi.advanceTimersByTime(100);
+      clearMapSelection.rerender({ ...shown, previewAnnotationId: 'poi', selectedAnnotationId: 'stop-2' });
+      vi.advanceTimersByTime(MAP_CLICK_DELAY_MS);
+      expect(clearMapSelection).not.toHaveBeenCalled();
+
+      // Left alone, a click still counts.
+      fireEvent.click(screen.getByRole('button', { name: 'the map' }));
+      vi.advanceTimersByTime(MAP_CLICK_DELAY_MS);
+      expect(clearMapSelection).toHaveBeenCalledTimes(1);
     });
 
     it("is the site preset's only: the editor selects what is clicked", () => {

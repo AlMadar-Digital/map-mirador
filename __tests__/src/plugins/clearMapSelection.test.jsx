@@ -87,16 +87,42 @@ describe('clearMapSelection (AlMadar-Digital/platform#481)', () => {
     expect(consumeOpenMinimised('w')).toBe(true);
   });
 
-  it('does nothing to a panel already on the map, or one the visitor closed', () => {
+  it('does nothing to a side panel already on the map, or a panel the visitor closed', () => {
     const onMapInfo = setupStore({ preview: MAP_INFO_ID, selected: null });
     const before = onMapInfo.getState();
     onMapInfo.dispatch(clearMapSelection('w'));
     expect(onMapInfo.getState()).toBe(before);
     expect(consumeOpenMinimised('w')).toBe(false);
+    expect(getSheetSnap('w')).toBe('half');
 
     const closed = setupStore({ preview: null, selected: null });
     closed.dispatch(clearMapSelection('w'));
     expect(panelOf(closed)).toBeUndefined();
+  });
+
+  it("drops the phone's sheet to its header when it is on the map already, reopened since", () => {
+    const store = setupStore({ position: 'bottom', preview: MAP_INFO_ID, selected: null });
+    expect(getSheetSnap('w')).toBe('half');
+    const before = store.getState();
+
+    store.dispatch(clearMapSelection('w'));
+
+    expect(getSheetSnap('w')).toBe('collapsed');
+    // Collapsed here and now: nothing is left asking the next panel to open minimised.
+    expect(consumeOpenMinimised('w')).toBe(false);
+    expect(store.getState()).toBe(before);
+  });
+
+  it("drops the phone's sheet to its header in a nested map too, on the POI it was opened from", () => {
+    const store = setupStore({ position: 'bottom' });
+    store.dispatch(openNestedMap('w', NESTED, { annotation: { id: 'poi' }, position: 'bottom', previewAnnotationId: 'poi' }));
+    expect(panelOf(store)).toMatchObject({ annotationid: NESTED_ORIGIN_ID, position: 'bottom' });
+    expect(getSheetSnap('w')).toBe('half');
+
+    store.dispatch(clearMapSelection('w'));
+
+    expect(getSheetSnap('w')).toBe('collapsed');
+    expect(panelOf(store).annotationid).toBe(NESTED_ORIGIN_ID);
   });
 
   it('closes the panel of a map with nothing to say about itself', () => {

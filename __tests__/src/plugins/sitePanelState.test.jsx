@@ -84,8 +84,9 @@ describe('useMapClick (AlMadar-Digital/platform#481)', () => {
   it('reports a click once it is not the first of a double click', () => {
     const onClick = vi.fn();
     const { result } = renderHook(() => useMapClick(fakeViewer(), true, onClick));
+    const [onMapClick] = result.current;
 
-    result.current();
+    onMapClick();
     vi.advanceTimersByTime(MAP_CLICK_DELAY_MS - 1);
     expect(onClick).not.toHaveBeenCalled();
 
@@ -97,30 +98,64 @@ describe('useMapClick (AlMadar-Digital/platform#481)', () => {
     const viewer = fakeViewer();
     const onClick = vi.fn();
     const { result } = renderHook(() => useMapClick(viewer, true, onClick));
+    const [onMapClick] = result.current;
 
-    result.current();
+    onMapClick();
     vi.advanceTimersByTime(200);
-    result.current();
+    onMapClick();
     viewer.fire('canvas-double-click');
     vi.advanceTimersByTime(MAP_CLICK_DELAY_MS * 2);
 
     expect(onClick).not.toHaveBeenCalled();
   });
 
-  it('gives the same handler on every render, calling the latest callback', () => {
+  it('gives the same handlers on every render, calling the latest callback', () => {
     const first = vi.fn();
     const latest = vi.fn();
     const { rerender, result } = renderHook(({ onClick }) => useMapClick(fakeViewer(), true, onClick), {
       initialProps: { onClick: first },
     });
-    const handler = result.current;
+    const [onMapClick, cancel] = result.current;
     rerender({ onClick: latest });
 
-    expect(result.current).toBe(handler);
-    handler();
+    expect(result.current[0]).toBe(onMapClick);
+    expect(result.current[1]).toBe(cancel);
+    onMapClick();
     vi.advanceTimersByTime(MAP_CLICK_DELAY_MS);
     expect(first).not.toHaveBeenCalled();
     expect(latest).toHaveBeenCalledTimes(1);
+  });
+
+  it('drops a click the visitor has moved on from: something else is selected or shown by then', () => {
+    const onClick = vi.fn();
+    const { rerender, result } = renderHook(({ stateKey }) => useMapClick(fakeViewer(), true, onClick, stateKey), {
+      initialProps: { stateKey: 'stop-1 journey' },
+    });
+    const [onMapClick] = result.current;
+
+    // A pin is picked 100ms after the click on the map: the click must not clear that selection.
+    onMapClick();
+    vi.advanceTimersByTime(100);
+    rerender({ stateKey: 'stop-2 journey' });
+    vi.advanceTimersByTime(MAP_CLICK_DELAY_MS);
+    expect(onClick).not.toHaveBeenCalled();
+
+    // A click made in the new state counts for it.
+    onMapClick();
+    vi.advanceTimersByTime(MAP_CLICK_DELAY_MS);
+    expect(onClick).toHaveBeenCalledTimes(1);
+  });
+
+  it('drops a click on request: the pin pressed next is the one selected already', () => {
+    const onClick = vi.fn();
+    const { result } = renderHook(() => useMapClick(fakeViewer(), true, onClick, 'stop-1 journey'));
+    const [onMapClick, cancel] = result.current;
+
+    onMapClick();
+    cancel();
+    vi.advanceTimersByTime(MAP_CLICK_DELAY_MS);
+
+    expect(onClick).not.toHaveBeenCalled();
   });
 
   it('forgets a pending click and stops listening when the map goes away', () => {
@@ -128,7 +163,7 @@ describe('useMapClick (AlMadar-Digital/platform#481)', () => {
     const onClick = vi.fn();
     const { result, unmount } = renderHook(() => useMapClick(viewer, true, onClick));
 
-    result.current();
+    result.current[0]();
     unmount();
     vi.advanceTimersByTime(MAP_CLICK_DELAY_MS);
 

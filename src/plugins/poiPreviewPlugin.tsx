@@ -32,6 +32,7 @@ import {
   ConnectedCompanionWindow as CompanionWindow,
   OSDReferences,
   addCompanionWindow,
+  deselectAnnotation,
   getAnnotations,
   getCompanionWindow,
   getCompanionWindows,
@@ -67,14 +68,17 @@ import { MAP_INFO_ID, NESTED_ORIGIN_ID, POI_PREVIEW_CONTENT_ID } from './preview
 import {
   consumeOpenMinimised,
   consumePanelFocus,
+  getSheetSnap,
   isInsideMap,
   notifyPanelClosed,
+  openNextMinimised,
   PANEL_LABELS,
   registerPanelCloseHandler,
   resetSheet,
   setPanelCollapsed,
   setSheetSnap,
   type SheetSnap,
+  useMapClick,
   useMinimiseOnFirstInteraction,
   usePanelCollapsed,
   usePanelFocusRequest,
@@ -1902,6 +1906,52 @@ export const openPreview = (
   }
 };
 
+/**
+ * A click on the map itself, in the site preset (AlMadar-Digital/platform#481): nothing is
+ * selected any more, and a panel showing a POI or a journey goes back to what it shows with
+ * nothing selected - "Discover the map", or in a nested map the POI it was opened from. The way
+ * back to the map's own title and description, with no control of its own.
+ *
+ * Unlike closing the panel, the map stays where it is: the visitor has just pointed at it. The
+ * panel keeps its place too: one slid away behind its tab stays there. The phone's sheet, which
+ * covers half the map, drops to its header - also when it is on that content already, reopened
+ * since the first touch of the map minimised it (D11). A map with nothing to say about itself
+ * closes the panel instead.
+ */
+export const clearMapSelection =
+  (windowId: string) => (dispatch: (action: unknown) => void, getState: () => unknown) => {
+    const state = getState();
+    const selectedId = getSelectedAnnotationId(state, { windowId }) as string | undefined;
+    const previewId = getPreviewCompanionWindowId(state, windowId);
+    const preview = previewId
+      ? (getCompanionWindow(state, { companionWindowId: previewId }) as
+          | { annotationid?: string; position?: string }
+          | undefined)
+      : undefined;
+    const shown = preview?.annotationid;
+
+    // The panel first: a journey's panel left without its selected stop would scroll on the way.
+    if (previewId && shown && shown !== MAP_INFO_ID && shown !== NESTED_ORIGIN_ID) {
+      const locale = getContentLocale((getConfig(state) as { language?: string }).language);
+      let atRest: string | null = null;
+      if (getNestedOrigin(state, windowId)?.annotation) atRest = NESTED_ORIGIN_ID;
+      else if (getMapInfo(state, windowId, locale)) atRest = MAP_INFO_ID;
+
+      if (atRest) {
+        if (preview?.position === 'bottom' || getSheetSnap(windowId) === 'collapsed') openNextMinimised(windowId);
+        dispatch(updateCompanionWindow(windowId, previewId, { annotationid: atRest }));
+      } else {
+        dispatch(removeCompanionWindow(windowId, previewId));
+        resetSheet(windowId);
+      }
+    } else if (previewId && shown && preview?.position === 'bottom') {
+      setPanelCollapsed(windowId, true);
+    }
+
+    if (selectedId) dispatch(deselectAnnotation(windowId, selectedId));
+    clearRestoredSelection(windowId);
+  };
+
 // Issue #410: on a phone-width viewport there's no room for a right-hand rail next to
 // the map, so the POI/journey preview opens as a bottom sheet instead.
 export const usePreviewPosition = (): 'bottom' | 'right' => {
@@ -1934,6 +1984,7 @@ interface AnnotationsOverlayPoiClickWrapperProps {
   addCompanionWindow: typeof addCompanionWindow;
   updateCompanionWindow: typeof updateCompanionWindow;
   annotationPages?: AnnotationPages;
+  clearMapSelection?: (windowId: string) => void;
   existingPreviewCompanionWindowId?: string;
   initialView?: InitialView;
   linkedMapResolver?: LinkedMapManifestResolver | null;
@@ -1941,6 +1992,8 @@ interface AnnotationsOverlayPoiClickWrapperProps {
   // The host numbers every pin by its place in the tour (MapViewer's `numberPins`).
   numberPins?: boolean;
   openNestedMap?: OpenNestedMap;
+  // What the window's panel shows, if it is open (an annotation's id, or one of previewIds.ts).
+  previewAnnotationId?: string | null;
   previewShowsMapInfo?: boolean;
   site?: boolean;
   updateViewport?: (windowId: string, viewport: Record<string, unknown>) => void;
@@ -1983,12 +2036,14 @@ const AnnotationsOverlayPoiClickWrapper = ({
   addCompanionWindow: dispatchAddCompanionWindow,
   updateCompanionWindow: dispatchUpdateCompanionWindow,
   annotationPages,
+  clearMapSelection: dispatchClearMapSelection,
   existingPreviewCompanionWindowId,
   initialView = 'fill',
   linkedMapResolver = null,
   locale = 'en',
   numberPins = false,
   openNestedMap: dispatchOpenNestedMap,
+  previewAnnotationId = null,
   previewShowsMapInfo = false,
   site = false,
   updateViewport: dispatchUpdateViewport,
@@ -2064,6 +2119,15 @@ const AnnotationsOverlayPoiClickWrapper = ({
     [items, linkedMapResolver]
   );
   const pinNumbers = useMemo(() => (numberPins ? getTourNumbers(items) : null), [items, numberPins]);
+  // A click on the map itself - not on a pin, which is a button over it - leaves nothing selected
+  // and the panel on the map's own description (AlMadar-Digital/platform#481). It counts a moment
+  // later (a double click zooms), and only if nothing else was selected or shown meanwhile.
+  const [onMapClick, cancelMapClick] = useMapClick(
+    targetProps.viewer as Parameters<typeof useMapClick>[0],
+    site,
+    () => dispatchClearMapSelection?.(targetProps.windowId),
+    `${targetProps.selectedAnnotationId ?? ''} ${previewAnnotationId ?? ''}`
+  );
   useSitePins({
     canvasWorld: targetProps.canvasWorld,
     enabled: site,
@@ -2073,6 +2137,9 @@ const AnnotationsOverlayPoiClickWrapper = ({
     numbers: pinNumbers,
     order: tourOrder,
     onSelect: (annotationId, { browsing } = {}) => {
+      // A pin picked right after a click on the map is what the visitor wants, the one selected
+      // already included.
+      cancelMapClick();
       // Arrowing along the pins only browses: it selects, so it never opens a nested map.
       if (browsing) {
         selectAnnotationAndMaybePreview(targetProps.windowId, annotationId);
@@ -2147,6 +2214,7 @@ const AnnotationsOverlayPoiClickWrapper = ({
         {...targetProps}
         annotations={canvasAnnotations}
         lineStyle={lineStyle}
+        onMapClick={onMapClick}
         selectAnnotation={selectAnnotationAndMaybePreview}
       />
     );
@@ -2165,6 +2233,10 @@ const poiPreviewClickPlugin = {
     annotationPages: getCanvasAnnotationPages(state, windowId),
     existingPreviewCompanionWindowId: getPreviewCompanionWindowId(state, windowId),
     linkedMapResolver: getLinkedMapResolver(state),
+    previewAnnotationId:
+      (getCompanionWindow(state, { companionWindowId: getPreviewCompanionWindowId(state, windowId) }) as
+        | { annotationid?: string }
+        | undefined)?.annotationid ?? null,
     previewShowsMapInfo:
       (getCompanionWindow(state, { companionWindowId: getPreviewCompanionWindowId(state, windowId) }) as
         | { annotationid?: string }
@@ -2178,7 +2250,7 @@ const poiPreviewClickPlugin = {
     numberPins: (getConfig(state) as { maps?: { numberPins?: boolean } }).maps?.numberPins === true,
     site: (getConfig(state) as { maps?: { site?: boolean } }).maps?.site === true,
   }),
-  mapDispatchToProps: { addCompanionWindow, openNestedMap, updateCompanionWindow, updateViewport },
+  mapDispatchToProps: { addCompanionWindow, clearMapSelection, openNestedMap, updateCompanionWindow, updateViewport },
 };
 
 export const poiPreviewPlugins = [poiPreviewCompanionWindowPlugin, poiPreviewClickPlugin];

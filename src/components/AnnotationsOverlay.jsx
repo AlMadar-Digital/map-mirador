@@ -93,6 +93,7 @@ export function AnnotationsOverlay({
   hoverAnnotation = () => {},
   hoveredAnnotationIds = [],
   lineStyle = null,
+  onMapClick = null,
   palette = {},
   searchAnnotations = [],
   selectAnnotation = () => {},
@@ -200,6 +201,14 @@ export function AnnotationsOverlay({
     (event) => {
       if (isIgnoredGesture(event)) return;
 
+      // A host that draws its own pins over the map (the site preset) takes a click on the canvas
+      // as a click on the map itself: nothing drawn here - a journey's line, whose shape hit-tests
+      // its whole interior - is a target. Only a click, never the end of a drag.
+      if (onMapClick) {
+        if (event.quick) onMapClick();
+        return;
+      }
+
       const {
         position: webPosition,
         eventSource: { viewport },
@@ -263,7 +272,7 @@ export function AnnotationsOverlay({
         toggleAnnotation(annosWithScore[0].anno.id);
       }
     },
-    [annotationsAtPoint, canvasWorld, osdCanvasOverlay, toggleAnnotation, viewer],
+    [annotationsAtPoint, canvasWorld, onMapClick, osdCanvasOverlay, toggleAnnotation, viewer],
   );
 
   const onCanvasMouseMove = useDebouncedCallback(
@@ -382,6 +391,7 @@ AnnotationsOverlay.propTypes = {
     strokeStyle: PropTypes.string,
   }),
   hoveredAnnotationIds: PropTypes.arrayOf(PropTypes.string),
+  onMapClick: PropTypes.func,
   palette: PropTypes.object,
   searchAnnotations: PropTypes.arrayOf(PropTypes.object),
   selectAnnotation: PropTypes.func,

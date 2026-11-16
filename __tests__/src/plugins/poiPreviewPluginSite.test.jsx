@@ -1,8 +1,8 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import PropTypes from 'prop-types';
 import { MAP_INFO_ID, mediaImageUrl, poiPreviewPlugins } from '../../../src/plugins/poiPreviewPlugin.tsx';
-import { registerPanelCloseHandler, resetSheet } from '../../../src/plugins/sitePanelState.ts';
+import { MAP_CLICK_DELAY_MS, registerPanelCloseHandler, resetSheet } from '../../../src/plugins/sitePanelState.ts';
 
 // Only the preview's own content is under test here, not Mirador's companion window chrome.
 vi.mock('../../../src/index', async (importOriginal) => {
@@ -312,6 +312,81 @@ describe('poiPreviewPlugin site preset', () => {
       scroller.remove();
     });
     /* eslint-enable testing-library/no-container, testing-library/no-node-access */
+  });
+
+  describe('a click on the map (AlMadar-Digital/platform#481)', () => {
+    const [, { component: MapOverlay, mapDispatchToProps }] = poiPreviewPlugins;
+    /** Stand-in for AnnotationsOverlay: a button that clicks the map, when it is given the handler */
+    function OverlayStub({ onMapClick = null }) {
+      return onMapClick ? (
+        <button onClick={onMapClick} type="button">
+          the map
+        </button>
+      ) : null;
+    }
+    OverlayStub.propTypes = { onMapClick: PropTypes.func };
+
+    const overlay = (clearMapSelection, { selectedAnnotationId = null, ...props }) => (
+      <MapOverlay
+        TargetComponent={OverlayStub}
+        addCompanionWindow={vi.fn()}
+        clearMapSelection={clearMapSelection}
+        targetProps={{ selectedAnnotationId, windowId: 'clicked-window' }}
+        updateCompanionWindow={vi.fn()}
+        {...props}
+      />
+    );
+    const renderOverlay = (props) => {
+      const clearMapSelection = vi.fn();
+      const { rerender } = render(overlay(clearMapSelection, props));
+      return Object.assign(clearMapSelection, { rerender: (next) => rerender(overlay(clearMapSelection, next)) });
+    };
+
+    afterEach(() => vi.useRealTimers());
+
+    it('clears the selection of its window, once it is no double click', () => {
+      vi.useFakeTimers();
+      const clearMapSelection = renderOverlay({ site: true });
+
+      fireEvent.click(screen.getByRole('button', { name: 'the map' }));
+      expect(clearMapSelection).not.toHaveBeenCalled();
+
+      vi.advanceTimersByTime(MAP_CLICK_DELAY_MS);
+      expect(clearMapSelection).toHaveBeenCalledTimes(1);
+      expect(clearMapSelection).toHaveBeenCalledWith('clicked-window');
+      expect(mapDispatchToProps.clearMapSelection).toBeTypeOf('function');
+    });
+
+    it('leaves alone a POI picked, or a panel opened, right after the click', () => {
+      vi.useFakeTimers();
+      const shown = { previewAnnotationId: 'journey', selectedAnnotationId: 'stop-1', site: true };
+      const clearMapSelection = renderOverlay(shown);
+
+      // Another stop is selected 100ms after the click on the map.
+      fireEvent.click(screen.getByRole('button', { name: 'the map' }));
+      vi.advanceTimersByTime(100);
+      clearMapSelection.rerender({ ...shown, selectedAnnotationId: 'stop-2' });
+      vi.advanceTimersByTime(MAP_CLICK_DELAY_MS);
+      expect(clearMapSelection).not.toHaveBeenCalled();
+
+      // The panel moves on to another POI's, the selection aside.
+      fireEvent.click(screen.getByRole('button', { name: 'the map' }));
+      vi.advanceTimersByTime(100);
+      clearMapSelection.rerender({ ...shown, previewAnnotationId: 'poi', selectedAnnotationId: 'stop-2' });
+      vi.advanceTimersByTime(MAP_CLICK_DELAY_MS);
+      expect(clearMapSelection).not.toHaveBeenCalled();
+
+      // Left alone, a click still counts.
+      fireEvent.click(screen.getByRole('button', { name: 'the map' }));
+      vi.advanceTimersByTime(MAP_CLICK_DELAY_MS);
+      expect(clearMapSelection).toHaveBeenCalledTimes(1);
+    });
+
+    it("is the site preset's only: the editor selects what is clicked", () => {
+      renderOverlay({ site: false });
+
+      expect(screen.queryByRole('button', { name: 'the map' })).not.toBeInTheDocument();
+    });
   });
 
   describe('keyboard', () => {

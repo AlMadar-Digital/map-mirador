@@ -357,6 +357,63 @@ describe('AnnotationsOverlay', () => {
     });
   });
 
+  describe('onMapClick (AlMadar-Digital/platform#481)', () => {
+    /** Raises canvas-click over the single test annotation, with a host that takes clicks on the map */
+    const clickWithMapClick = (quick, pointerType = 'mouse') => {
+      const onMapClick = vi.fn();
+      const selectAnnotation = vi.fn();
+      const deselectAnnotation = vi.fn();
+
+      const { viewer } = createWrapper({
+        annotations: [
+          new AnnotationList({
+            '@id': 'foo',
+            resources: [
+              {
+                '@id': 'http://example.org/identifier/annotation/anno-line',
+                '@type': 'oa:Annotation',
+                motivation: 'sc:painting',
+                on: 'http://iiif.io/api/presentation/2.0/example/fixtures/canvas/24/c1.json#xywh=100,100,250,20',
+              },
+            ],
+          }),
+        ],
+        deselectAnnotation,
+        onMapClick,
+        selectAnnotation,
+      });
+
+      viewer.raiseEvent('canvas-click', {
+        eventSource: { viewport: viewer.viewport },
+        originalEvent: { pointerType },
+        position: new OpenSeadragon.Point(101, 101),
+        quick,
+      });
+
+      return { deselectAnnotation, onMapClick, selectAnnotation };
+    };
+
+    it('takes a click as a click on the map, even over a shape drawn on it', () => {
+      const { deselectAnnotation, onMapClick, selectAnnotation } = clickWithMapClick(true);
+
+      expect(onMapClick).toHaveBeenCalledTimes(1);
+      expect(selectAnnotation).not.toHaveBeenCalled();
+      expect(deselectAnnotation).not.toHaveBeenCalled();
+    });
+
+    it('takes a tap as one too', () => {
+      expect(clickWithMapClick(true, 'touch').onMapClick).toHaveBeenCalledTimes(1);
+    });
+
+    it('is not told about the end of a drag', () => {
+      expect(clickWithMapClick(false).onMapClick).not.toHaveBeenCalled();
+    });
+
+    it('is not told about the end of a touch drag or pinch', () => {
+      expect(clickWithMapClick(false, 'touch').onMapClick).not.toHaveBeenCalled();
+    });
+  });
+
   describe('onCanvasClick with a POI marker (pointSelector)', () => {
     /** Builds a wrapper with a single POI annotation anchored at (150, 150) and a fixed zoomRatio of 1 */
     const createPoiWrapper = (selectAnnotation) => {

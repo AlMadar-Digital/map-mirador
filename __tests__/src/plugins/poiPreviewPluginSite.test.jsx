@@ -649,4 +649,135 @@ describe('poiPreviewPlugin site preset', () => {
       expect(container.querySelector('.dbf-map-poi__text')).toHaveTextContent('Cairo text');
     });
   });
+
+  describe('media caption (#520)', () => {
+    const image = { id: 'img1', source: 'iiif-image', thumbnailUrl: 'https://iiif/full/960,/0/default.jpg', title: 'Folio 1' };
+    /** A single POI's card, with the given media in the card's language. */
+    const renderPoi = (media, locale = 'en') =>
+      render(
+        <PreviewContent
+          annotation={{
+            ...stop('a', 'Cairo', 1),
+            'dbf:journey': null,
+            [locale === 'ar' ? 'dbf:mediaAr' : 'dbf:mediaEn']: media,
+          }}
+          id="cw"
+          journeyPois={[]}
+          locale={locale}
+          position="right"
+          removeCompanionWindow={vi.fn()}
+          selectAnnotation={vi.fn()}
+          site
+          windowId="window"
+        />,
+      );
+
+    it('lists the caption, credit, rights statement and object link under the image', () => {
+      const { container } = renderPoi({
+        ...image,
+        caption: 'A view of the Nile',
+        credit: 'Courtesy QNL',
+        rightsStatement: { label: 'In Copyright', uri: 'https://rightsstatements.org/vocab/InC/1.0/' },
+        work: { title: 'Book of Roger', url: '/en/objects/25-G2-06-0343' },
+      });
+
+      // eslint-disable-next-line testing-library/no-container, testing-library/no-node-access -- the class names are the contract
+      const figure = container.querySelector('figure.dbf-map-poi__media');
+      // eslint-disable-next-line testing-library/no-node-access -- the class names are the contract
+      const lines = [...figure.querySelectorAll('.dbf-map-poi__caption > p')];
+      expect(lines.map((line) => [line.className, line.textContent])).toEqual([
+        ['dbf-map-poi__caption-text', 'A view of the Nile'],
+        ['dbf-map-poi__credit', 'Courtesy QNL'],
+        ['dbf-map-poi__rights', 'In Copyright'],
+        ['dbf-map-poi__work', 'Object details'],
+      ]);
+      const rights = screen.getByRole('link', { name: 'In Copyright' });
+      expect(rights).toHaveAttribute('href', 'https://rightsstatements.org/vocab/InC/1.0/');
+      expect(rights).toHaveAttribute('target', '_blank');
+      const work = screen.getByRole('link', { name: 'Object details: Book of Roger' });
+      expect(work).toHaveAttribute('href', '/en/objects/25-G2-06-0343');
+      expect(work).toHaveClass('dbf-map-work__link');
+      expect(work).not.toHaveAttribute('target');
+    });
+
+    it('shows only the lines the media carries, and no caption block when it carries none', () => {
+      const { container, unmount } = renderPoi({ ...image, credit: 'Courtesy QNL' });
+      // eslint-disable-next-line testing-library/no-container, testing-library/no-node-access -- the class names are the contract
+      expect([...container.querySelectorAll('.dbf-map-poi__caption > p')].map((line) => line.className)).toEqual([
+        'dbf-map-poi__credit',
+      ]);
+      unmount();
+
+      const bare = renderPoi(image);
+      // eslint-disable-next-line testing-library/no-container, testing-library/no-node-access -- the class names are the contract
+      expect(bare.container.querySelector('.dbf-map-poi__media img')).toBeInTheDocument();
+      // eslint-disable-next-line testing-library/no-container, testing-library/no-node-access -- the class names are the contract
+      expect(bare.container.querySelector('.dbf-map-poi__caption')).not.toBeInTheDocument();
+    });
+
+    it('labels the object link in Arabic on an Arabic card', () => {
+      renderPoi({ ...image, work: { title: 'كتاب روجر', url: '/ar/objects/25-G2-06-0343' } }, 'ar');
+
+      expect(screen.getByRole('link', { name: 'تفاصيل القطعة: كتاب روجر' })).toHaveAttribute('href', '/ar/objects/25-G2-06-0343');
+    });
+
+    it('links only web addresses and site paths', () => {
+      renderPoi({
+        ...image,
+        // eslint-disable-next-line no-script-url -- the value under test
+        rightsStatement: { label: 'In Copyright', uri: 'javascript:alert(1)' },
+        // eslint-disable-next-line no-script-url -- the value under test
+        work: { title: 'Book of Roger', url: 'javascript:alert(1)' },
+      });
+
+      expect(screen.getByText('In Copyright')).toBeInTheDocument();
+      expect(screen.queryByRole('link')).not.toBeInTheDocument();
+    });
+
+    // Only a stop that opens a nested map has a clickable card (AlMadar-Digital/platform#549):
+    // a link inside it must not open that map too.
+    it("does not open the stop's nested map when a caption link is followed", async () => {
+      const openNestedMap = vi.fn();
+      const selectAnnotation = vi.fn();
+      const stopWithMedia = {
+        ...stop('a', 'Cairo', 1),
+        'dbf:linkedMap': { id: 'nested-doc', manifestId: 'https://example.org/nested' },
+        'dbf:mediaEn': {
+          ...image,
+          rightsStatement: { label: 'In Copyright', uri: 'https://rightsstatements.org/vocab/InC/1.0/' },
+          work: { title: 'Book of Roger', url: '/en/objects/25-G2-06-0343' },
+        },
+      };
+      render(
+        <PreviewContent
+          annotation={journey}
+          id="cw"
+          journeyPois={[stopWithMedia, stop('b', 'Luxor', 2)]}
+          locale="en"
+          openNestedMap={openNestedMap}
+          position="right"
+          removeCompanionWindow={vi.fn()}
+          selectAnnotation={selectAnnotation}
+          site
+          windowId="window"
+        />,
+      );
+      const links = [
+        screen.getByRole('link', { name: 'Object details: Book of Roger' }),
+        screen.getByRole('link', { name: 'In Copyright' }),
+      ];
+      // jsdom cannot navigate: keep the clicks from trying to.
+      links.forEach((link) => link.addEventListener('click', (event) => event.preventDefault()));
+
+      await userEvent.click(links[0]);
+      await userEvent.click(links[1]);
+
+      expect(openNestedMap).not.toHaveBeenCalled();
+      expect(selectAnnotation).not.toHaveBeenCalled();
+
+      // The card itself still opens the map.
+      await userEvent.click(screen.getByRole('button', { name: 'Cairo' }));
+      expect(openNestedMap).toHaveBeenCalledTimes(1);
+    });
+  });
 });

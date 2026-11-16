@@ -179,6 +179,9 @@ type DbfMedia = {
   caption?: string | null;
   credit?: string | null;
   rightsStatement?: { label: string | null; uri: string | null } | null;
+  // Issue #520: the Work an IIIF image belongs to, added by the host site (the maps plugin does
+  // not send it): its title and the URL of its page on the site, in this slot's language.
+  work?: { title: string; url: string } | null;
 };
 
 type RawAnnotation = {
@@ -222,6 +225,7 @@ const LABELS: Record<ContentLocale, Record<string, string>> = {
     editStop: 'تعديل هذه المحطة',
     noStops: 'لا توجد محطات في هذه الرحلة بعد.',
     notFound: 'تعذر العثور على هذا العنصر - ربما تم حذفه.',
+    objectDetails: 'تفاصيل القطعة',
     openMap: 'فتح الخريطة',
     closePanel: 'إغلاق اللوحة',
     ...PANEL_LABELS.ar,
@@ -252,6 +256,7 @@ const LABELS: Record<ContentLocale, Record<string, string>> = {
     editStop: 'Edit this stop',
     noStops: 'This journey has no stops yet.',
     notFound: 'This annotation could not be found - it may have been deleted.',
+    objectDetails: 'Object details',
     openMap: 'Open map',
     closePanel: 'Close panel',
     ...PANEL_LABELS.en,
@@ -335,8 +340,51 @@ const EditorMediaCredits = ({ media }: { media: DbfMedia }) => {
   );
 };
 
-// A site card's media (`.dbf-map-poi__media`): the audio player for a recording, else its image.
-// A recording is titled with its Media Item's title (English only on the wire), else the POI's.
+// Only a web address or a path on the host site becomes a link.
+const WEB_URL = /^https?:\/\//i;
+const SITE_URL = /^(\/(?!\/)|https?:\/\/)/i;
+// A link inside a card must not also select the card it is in.
+const stopPropagation = (event: { stopPropagation: () => void }) => event.stopPropagation();
+
+// What a site card says under its image (`.dbf-map-poi__caption`, issue #520), one line each and
+// only those the media carries: its caption, its credit line, its rights statement (linked to
+// its URI) and, for an image that belongs to a Work, a link to the Work's page on the site.
+// The texts arrive resolved in the card's language; the host site styles the lines.
+const SiteMediaCaption = ({ label, media }: { label: string; media: DbfMedia }) => {
+  const rights = media.rightsStatement;
+  const rightsText = rights?.label || rights?.uri;
+  const work = media.work && SITE_URL.test(media.work.url) ? media.work : null;
+  if (!media.caption && !media.credit && !rightsText && !work) return null;
+  return (
+    <figcaption className="dbf-map-poi__caption">
+      {media.caption && <p className="dbf-map-poi__caption-text">{media.caption}</p>}
+      {media.credit && <p className="dbf-map-poi__credit">{media.credit}</p>}
+      {rightsText && (
+        <p className="dbf-map-poi__rights">
+          {rights?.uri && WEB_URL.test(rights.uri) ? (
+            <a href={rights.uri} onClick={stopPropagation} rel="noopener noreferrer" target="_blank">{rightsText}</a>
+          ) : rightsText}
+        </p>
+      )}
+      {work && (
+        <p className="dbf-map-poi__work">
+          <a
+            aria-label={work.title ? `${label}: ${work.title}` : undefined}
+            className="dbf-map-work__link"
+            href={work.url}
+            onClick={stopPropagation}
+          >
+            {label}
+          </a>
+        </p>
+      )}
+    </figcaption>
+  );
+};
+
+// A site card's media (`.dbf-map-poi__media`): the audio player for a recording, else its image
+// with its caption under it. A recording is titled with its Media Item's title (English only on
+// the wire), else the POI's.
 const SiteMedia = ({ locale, media, poiTitle }: { locale: ContentLocale; media?: DbfMedia | null; poiTitle: string }) => {
   const labels = LABELS[locale];
   const src = audioUrl(media);
@@ -370,9 +418,11 @@ const SiteMedia = ({ locale, media, poiTitle }: { locale: ContentLocale; media?:
   const image = mediaImageUrl(media);
   if (!image) return null;
   return (
-    <div className="dbf-map-poi__media">
+    // The margin is structure (a figure's default would indent the image); the rest is the host's.
+    <figure className="dbf-map-poi__media" style={{ margin: 0 }}>
       <img alt={media?.title ?? ''} src={image} />
-    </div>
+      {media && <SiteMediaCaption label={labels.objectDetails} media={media} />}
+    </figure>
   );
 };
 

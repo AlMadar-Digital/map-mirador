@@ -4,7 +4,9 @@ import {
   notifyPanelClosed,
   openNextMinimised,
   registerPanelCloseHandler,
+  MAP_CLICK_DELAY_MS,
   setPanelCollapsed,
+  useMapClick,
   useMinimiseOnFirstInteraction,
   usePanelCollapsed,
 } from '../../../src/plugins/sitePanelState.ts';
@@ -72,6 +74,66 @@ describe('useMinimiseOnFirstInteraction', () => {
 
     rerender({ enabled: true, v: viewer });
     expect(Object.keys(viewer.handlers)).toEqual(['canvas-drag', 'canvas-scroll', 'canvas-pinch', 'canvas-click']);
+  });
+});
+
+describe('useMapClick (AlMadar-Digital/platform#481)', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it('reports a click once it is not the first of a double click', () => {
+    const onClick = vi.fn();
+    const { result } = renderHook(() => useMapClick(fakeViewer(), true, onClick));
+
+    result.current();
+    vi.advanceTimersByTime(MAP_CLICK_DELAY_MS - 1);
+    expect(onClick).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(1);
+    expect(onClick).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves a double click, which zooms the map, alone', () => {
+    const viewer = fakeViewer();
+    const onClick = vi.fn();
+    const { result } = renderHook(() => useMapClick(viewer, true, onClick));
+
+    result.current();
+    vi.advanceTimersByTime(200);
+    result.current();
+    viewer.fire('canvas-double-click');
+    vi.advanceTimersByTime(MAP_CLICK_DELAY_MS * 2);
+
+    expect(onClick).not.toHaveBeenCalled();
+  });
+
+  it('gives the same handler on every render, calling the latest callback', () => {
+    const first = vi.fn();
+    const latest = vi.fn();
+    const { rerender, result } = renderHook(({ onClick }) => useMapClick(fakeViewer(), true, onClick), {
+      initialProps: { onClick: first },
+    });
+    const handler = result.current;
+    rerender({ onClick: latest });
+
+    expect(result.current).toBe(handler);
+    handler();
+    vi.advanceTimersByTime(MAP_CLICK_DELAY_MS);
+    expect(first).not.toHaveBeenCalled();
+    expect(latest).toHaveBeenCalledTimes(1);
+  });
+
+  it('forgets a pending click and stops listening when the map goes away', () => {
+    const viewer = fakeViewer();
+    const onClick = vi.fn();
+    const { result, unmount } = renderHook(() => useMapClick(viewer, true, onClick));
+
+    result.current();
+    unmount();
+    vi.advanceTimersByTime(MAP_CLICK_DELAY_MS);
+
+    expect(onClick).not.toHaveBeenCalled();
+    expect(viewer.handlers).toEqual({});
   });
 });
 

@@ -112,8 +112,11 @@ export const MAP_VIEWER_LANGUAGES = ['en', 'ar'];
  * see mapInteractionPlugin.tsx.
  *
  * With `site`, the side panel opens with the map and stays open until closed; closing it clears
- * the selection and returns the map to its opening view. Selecting a POI centres and zooms the
- * map on it. A POI with a nested map opens it with a zoom onto the POI and a crossfade.
+ * the selection and returns the map to its opening view. A click on the map itself clears the
+ * selection too, and the panel goes back to the map's own title and description ("Discover the
+ * map"; in a nested map, the POI it was opened from) while the map stays where it is. Selecting
+ * a POI centres and zooms the map on it. A POI with a nested map opens it with a zoom onto the
+ * POI and a crossfade.
  * `numberPins` numbers every pin by its place in the tour, not only a journey's stops - for a
  * host that shows the same places elsewhere (a modern map) and needs them to match.
  *

@@ -2245,8 +2245,14 @@ const AnnotationsOverlayPoiClickWrapper = ({
     enabled: site,
     firstPoint: firstPin ? pinPoint(firstPin) : null,
     focusOnPoint: (point) => focusMapOnPoint(targetProps.windowId, point),
+    // Across only: a phone's sheet covers the foot of the map, and is minimised as the map opens.
+    freeSpan: () => {
+      const area = targetProps.viewer ? getVisibleMapArea(targetProps.viewer as OsdViewer) : null;
+      return area ? { width: area.width, x: area.x } : null;
+    },
     halfwayToPoint: (point) => zoomMapHalfwayToPoint(targetProps.windowId, point),
     initialView,
+    panelKey: previewShowsMapInfo && previewPosition !== 'bottom' ? (existingPreviewCompanionWindowId ?? '') : '',
     points: fillPoints,
     storeViewport: dispatchUpdateViewport,
     viewer: targetProps.viewer as Parameters<typeof useFillView>[0]['viewer'],

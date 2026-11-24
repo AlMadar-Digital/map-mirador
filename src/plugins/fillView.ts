@@ -8,12 +8,18 @@ import { hasPendingParentViewport } from './nestedMapPlugin';
 // (which runs on the first tile, see OpenSeadragonComponent); Back restores the parent's view
 // instead.
 //
+// A panel docked over the side of the map hides what is behind it, so the POIs are framed in the
+// part it leaves free (AlMadar-Digital/platform#682): the map opens moved out from under the
+// panel, and zoomed out as far as the whole image beside it if the POIs need that.
+//
 // A host can then have it zoom in from there (MapViewer's `initialView`, #504): onto the first
 // POI of the tour, the way the panel focuses on a POI, or halfway there (`halfwayViewBounds`).
 // The zoom animates from the fill, and leaves the panel as it is: it doesn't select the POI.
 
 type Point = { x: number; y: number };
 type Rect = { x: number; y: number; width: number; height: number };
+/** The part of the container no side panel covers: where it starts and how wide it is, in px. */
+export type FreeSpan = { x: number; width: number };
 
 /** How a map opens: filling the view, then zoomed halfway in towards the first POI, or onto it. */
 export const INITIAL_VIEWS = ['fill', 'halfway', 'firstPoi'] as const;
@@ -69,11 +75,19 @@ const EDGE_MARGIN = 24;
 
 /**
  * The view (in image units) that fills a `container` px viewport with an image of `bounds`,
- * zoomed out only as far as needed to keep every point (with room for its pin) in view.
+ * zoomed out only as far as needed to keep every point (with room for its pin) in view - in
+ * `free`, the part of the container a side panel leaves uncovered, when there is one.
  */
-export const fillViewBounds = (bounds: Rect, container: { x: number; y: number }, points: Point[]): Rect => {
+export const fillViewBounds = (
+  bounds: Rect,
+  container: { x: number; y: number },
+  points: Point[],
+  free: FreeSpan | null = null,
+): Rect => {
+  const span = free && free.width > 0 && free.width < container.x ? free : { width: container.x, x: 0 };
   const cover = Math.min(bounds.width / container.x, bounds.height / container.y);
-  const contain = Math.max(bounds.width / container.x, bounds.height / container.y);
+  // The whole image, beside the panel.
+  const contain = Math.max(bounds.width / span.width, bounds.height / container.y);
   if (!(cover > 0) || !(contain > 0)) return bounds;
 
   let unitsPerPixel = cover;
@@ -82,7 +96,7 @@ export const fillViewBounds = (bounds: Rect, container: { x: number; y: number }
     const xs = points.map(({ x }) => x);
     const ys = points.map(({ y }) => y);
     pinBox = { height: Math.max(...ys) - Math.min(...ys), width: Math.max(...xs) - Math.min(...xs), x: Math.min(...xs), y: Math.min(...ys) };
-    const roomX = container.x - 2 * (EDGE_MARGIN + PIN_HALF_WIDTH);
+    const roomX = span.width - 2 * (EDGE_MARGIN + PIN_HALF_WIDTH);
     const roomY = container.y - 2 * EDGE_MARGIN - PIN_HEIGHT;
     if (roomX > 0 && roomY > 0) {
       unitsPerPixel = Math.max(unitsPerPixel, pinBox.width / roomX, pinBox.height / roomY);
@@ -100,7 +114,10 @@ export const fillViewBounds = (bounds: Rect, container: { x: number; y: number }
     const margin = EDGE_MARGIN * unitsPerPixel;
     const side = (EDGE_MARGIN + PIN_HALF_WIDTH) * unitsPerPixel;
     const pin = PIN_HEIGHT * unitsPerPixel;
-    centerX = clamp(centerX, pinBox.x + pinBox.width + side - width / 2, pinBox.x - side + width / 2);
+    // What a panel covers at the start and at the end of the container.
+    const before = span.x * unitsPerPixel;
+    const after = (container.x - span.x - span.width) * unitsPerPixel;
+    centerX = clamp(centerX, pinBox.x + pinBox.width + side - width / 2 + after, pinBox.x - side + width / 2 - before);
     centerY = clamp(centerY, pinBox.y + pinBox.height + margin - height / 2, pinBox.y - margin - pin + height / 2);
   }
   return { height, width, x: centerX - width / 2, y: centerY - height / 2 };
@@ -132,18 +149,28 @@ type Viewer = {
 // The images already filled, so a map is filled once however it got here - and how each was
 // filled: the view it was given and how many POIs it framed, so POIs that arrive after the
 // image's first tile can still be taken in while the visitor hasn't moved the map.
-const filled = new WeakMap<object, { center: Point; count: number; zoom: number }>();
+const filled = new WeakMap<object, { center: Point; count: number; free: FreeSpan | null; zoom: number }>();
+
+const sameSpan = (a: FreeSpan | null, b: FreeSpan | null) =>
+  Math.abs((a?.x ?? 0) - (b?.x ?? 0)) < 1 && Math.abs((a?.width ?? 0) - (b?.width ?? 0)) < 1;
 
 interface UseFillViewOptions {
   enabled: boolean;
   // The first POI of the tour, in viewport (canvas) units, for the halfway and firstPoi views.
   firstPoint?: Point | null;
+  // The part of the map no side panel covers, measured when the map is filled
+  // (poiPreviewPlugin's getVisibleMapArea); the whole of it when left out.
+  freeSpan?: () => FreeSpan | null;
   // Focuses the map on a point the way the panel does (poiPreviewPlugin's focusMapOnPoint).
   focusOnPoint?: (point: Point) => void;
   // Moves the map halfway from the fill to that focus (poiPreviewPlugin's zoomMapHalfwayToPoint).
   halfwayToPoint?: (point: Point) => void;
   // Where the map ends up once it fills the view; 'fill' (stay) unless the host chose otherwise.
   initialView?: InitialView;
+  // Changes when the panel that opens with the map does: a panel that arrives after the map was
+  // filled is taken into account, unless the visitor has moved the map since. Empty for a panel
+  // that shows something the visitor picked, which moves the map itself.
+  panelKey?: string;
   // The POIs' points in viewport (canvas) units.
   points: Point[];
   // Writes the viewport to Mirador's store too, so Mirador keeps it.
@@ -156,27 +183,30 @@ export const useFillView = ({
   enabled,
   firstPoint = null,
   focusOnPoint,
+  freeSpan,
   halfwayToPoint,
   initialView = 'fill',
+  panelKey = '',
   points,
   storeViewport,
   viewer,
   windowId,
 }: UseFillViewOptions) => {
   // Read when the image's first tile is in, which can be after these last changed.
-  const latest = useRef({ firstPoint, focusOnPoint, halfwayToPoint, initialView, points });
+  const latest = useRef({ firstPoint, focusOnPoint, freeSpan, halfwayToPoint, initialView, points });
   useEffect(() => {
-    latest.current = { firstPoint, focusOnPoint, halfwayToPoint, initialView, points };
+    latest.current = { firstPoint, focusOnPoint, freeSpan, halfwayToPoint, initialView, points };
   });
 
   // Fills the view with an image, framing the current POIs, then zooms in as the host asked.
   const applyFill = (target: Viewer, item: { getBounds: () => Rect }) => {
     const current = latest.current;
-    const bounds = fillViewBounds(item.getBounds(), target.viewport.getContainerSize(), current.points);
+    const free = current.freeSpan?.() ?? null;
+    const bounds = fillViewBounds(item.getBounds(), target.viewport.getContainerSize(), current.points, free);
     target.viewport.fitBounds(new OpenSeadragon.Rect(bounds.x, bounds.y, bounds.width, bounds.height), true);
     const center = target.viewport.getCenter(true);
     const zoom = target.viewport.getZoom(true);
-    filled.set(item, { center, count: current.points.length, zoom });
+    filled.set(item, { center, count: current.points.length, free, zoom });
 
     // Without a POI yet there is nothing to zoom towards: the fill stands, and is taken up again
     // when the POIs arrive (below).
@@ -222,6 +252,7 @@ export const useFillView = ({
       const item = viewer.world.getItemAt(0);
       if (!item) return;
       const current = latest.current;
+      // The whole view: this runs as the panel closes, while it is still sliding away.
       const bounds = fillViewBounds(item.getBounds(), viewer.viewport.getContainerSize(), current.points);
       if (zoomOn) viewer.removeHandler('animation-finish', zoomOn);
       const point = current.initialView === 'fill' ? null : current.firstPoint;
@@ -262,18 +293,34 @@ export const useFillView = ({
   // The annotations load separately from the image: POIs arriving after the first fit are taken
   // in (and the host's zoom towards the first of them applied), unless the visitor has moved the
   // map since.
+  const unmovedSince = (target: Viewer, item: { getBounds: () => Rect }, fit: { center: Point; zoom: number }) => {
+    const center = target.viewport.getCenter(true);
+    const zoom = target.viewport.getZoom(true);
+    const tolerance = item.getBounds().width * 1e-4;
+    return Math.abs(zoom - fit.zoom) <= fit.zoom * 1e-4 && Math.hypot(center.x - fit.center.x, center.y - fit.center.y) <= tolerance;
+  };
   const pointsKey = points.map(({ x, y }) => `${x},${y}`).join(';');
   useEffect(() => {
     if (!enabled || !viewer) return;
     const item = viewer.world.getItemAt(0);
     const fit = item ? filled.get(item) : undefined;
     if (!item || !fit || points.length <= fit.count) return;
-    const center = viewer.viewport.getCenter(true);
-    const zoom = viewer.viewport.getZoom(true);
-    const tolerance = item.getBounds().width * 1e-4;
-    const unmoved =
-      Math.abs(zoom - fit.zoom) <= fit.zoom * 1e-4 && Math.hypot(center.x - fit.center.x, center.y - fit.center.y) <= tolerance;
-    if (unmoved) applyFill(viewer, item);
+    if (unmovedSince(viewer, item, fit)) applyFill(viewer, item);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `points` is captured by `pointsKey`
   }, [enabled, pointsKey, viewer]);
+
+  // The panel can open after the map was filled: the POIs it would cover are moved out from
+  // under it, unless the visitor has moved the map since (AlMadar-Digital/platform#682).
+  useEffect(() => {
+    if (!enabled || !viewer || !panelKey) return undefined;
+    // A frame on, so the panel is laid out where it is measured.
+    const frame = requestAnimationFrame(() => {
+      const item = viewer.world.getItemAt(0);
+      const fit = item ? filled.get(item) : undefined;
+      if (!item || !fit || !unmovedSince(viewer, item, fit)) return;
+      if (!sameSpan(latest.current.freeSpan?.() ?? null, fit.free)) applyFill(viewer, item);
+    });
+    return () => cancelAnimationFrame(frame);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `applyFill` reads the latest values through a ref
+  }, [enabled, panelKey, viewer]);
 };

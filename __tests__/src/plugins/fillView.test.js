@@ -42,6 +42,67 @@ describe('fillViewBounds', () => {
   });
 });
 
+describe('fillViewBounds beside a side panel (AlMadar-Digital/platform#682)', () => {
+  const container = { x: 1425, y: 900 };
+  const page = { height: 1535, width: 2186, x: 0, y: 0 };
+  // Where the view shows a point across the container, in px.
+  const across = (view, { x }) => ((x - view.x) * container.x) / view.width;
+
+  it('moves POIs out from under a panel at the start of the map (Arabic)', () => {
+    const points = [
+      { x: 236, y: 598 },
+      { x: 750, y: 972 },
+    ];
+    const free = { width: 945, x: 480 };
+    const covered = fillViewBounds(page, container, points);
+    expect(across(covered, points[0])).toBeLessThan(free.x);
+
+    const view = fillViewBounds(page, container, points, free);
+    points.forEach((point) => {
+      expect(across(view, point) - 25).toBeGreaterThanOrEqual(free.x);
+      expect(across(view, point) + 25).toBeLessThanOrEqual(free.x + free.width);
+    });
+    // Moved, not zoomed: the POIs fit beside the panel as they are.
+    expect(view.width).toBeCloseTo(covered.width);
+  });
+
+  it('moves POIs out from under a panel at the end of the map (English)', () => {
+    const points = [
+      { x: 1500, y: 598 },
+      { x: 2100, y: 972 },
+    ];
+    const free = { width: 945, x: 0 };
+    const view = fillViewBounds(page, container, points, free);
+
+    points.forEach((point) => {
+      expect(across(view, point) - 25).toBeGreaterThanOrEqual(0);
+      expect(across(view, point) + 25).toBeLessThanOrEqual(free.width);
+    });
+  });
+
+  it('zooms out as far as the whole image beside the panel for POIs across the map', () => {
+    const points = [
+      { x: 100, y: 700 },
+      { x: 2086, y: 700 },
+    ];
+    const free = { width: 945, x: 480 };
+    const view = fillViewBounds(page, container, points, free);
+
+    expect(view.width / container.x).toBeCloseTo(page.width / free.width);
+    points.forEach((point) => {
+      expect(across(view, point)).toBeGreaterThanOrEqual(free.x);
+      expect(across(view, point)).toBeLessThanOrEqual(free.x + free.width);
+    });
+  });
+
+  it('leaves the view as it was without POIs, or without a panel', () => {
+    const points = [{ x: 236, y: 598 }];
+    expect(fillViewBounds(page, container, [], { width: 945, x: 480 })).toEqual(fillViewBounds(page, container, []));
+    expect(fillViewBounds(page, container, points, { width: 1425, x: 0 })).toEqual(fillViewBounds(page, container, points));
+    expect(fillViewBounds(page, container, points, null)).toEqual(fillViewBounds(page, container, points));
+  });
+});
+
 describe('normalizeInitialView', () => {
   it('keeps a view it knows and fills for anything else', () => {
     expect(normalizeInitialView('halfway')).toBe('halfway');
@@ -185,6 +246,67 @@ describe('useFillView', () => {
       ],
     });
     expect(viewer.viewport.fitBounds).toHaveBeenCalledTimes(2);
+  });
+
+  describe('a side panel (AlMadar-Digital/platform#682)', () => {
+    const points = [
+      { x: 150, y: 600 },
+      { x: 500, y: 700 },
+    ];
+    const panel = { width: 960, x: 480 };
+
+    it('frames the POIs in the part of the map the panel leaves free', async () => {
+      const { renderHook } = await import('@testing-library/react');
+      const { useFillView } = await import('../../../src/plugins/fillView.ts');
+      const viewer = fakeViewer();
+      renderHook(() => useFillView({ enabled: true, freeSpan: () => panel, points, viewer, windowId: 'panel-open' }));
+      viewer.handlers['tile-loaded']();
+
+      const expected = fillViewBounds(image, { x: 1440, y: 900 }, points, panel);
+      expect(viewer.view.center.x).toBeCloseTo(expected.x + expected.width / 2);
+      expect(viewer.view.center.x).not.toBeCloseTo(fillViewBounds(image, { x: 1440, y: 900 }, points).x + expected.width / 2);
+    });
+
+    it('takes in a panel that opens after the fill, unless the visitor has moved the map', async () => {
+      const { renderHook } = await import('@testing-library/react');
+      const { useFillView } = await import('../../../src/plugins/fillView.ts');
+      const open = (windowId) => {
+        const viewer = fakeViewer();
+        let free = null;
+        const props = { enabled: true, freeSpan: () => free, points, viewer, windowId };
+        const hook = renderHook((p) => useFillView(p), { initialProps: props });
+        viewer.handlers['tile-loaded']();
+        expect(viewer.viewport.fitBounds).toHaveBeenCalledTimes(1);
+        return {
+          openPanel: () => {
+            free = panel;
+            hook.rerender({ ...props, panelKey: 'cw-1' });
+          },
+          viewer,
+        };
+      };
+
+      const still = open('panel-late');
+      still.openPanel();
+      expect(still.viewer.viewport.fitBounds).toHaveBeenCalledTimes(2);
+
+      const moved = open('panel-late-moved');
+      moved.viewer.view.center = { x: 100, y: 100 };
+      moved.openPanel();
+      expect(moved.viewer.viewport.fitBounds).toHaveBeenCalledTimes(1);
+    });
+
+    it('returns to the whole view as the panel closes', async () => {
+      const { renderHook } = await import('@testing-library/react');
+      const { returnToOpeningView, useFillView } = await import('../../../src/plugins/fillView.ts');
+      const viewer = fakeViewer();
+      renderHook(() => useFillView({ enabled: true, freeSpan: () => panel, points, viewer, windowId: 'panel-close' }));
+      viewer.handlers['tile-loaded']();
+
+      returnToOpeningView('panel-close');
+      const whole = fillViewBounds(image, { x: 1440, y: 900 }, points);
+      expect(viewer.view.center.x).toBeCloseTo(whole.x + whole.width / 2);
+    });
   });
 
   describe('initialView (#504)', () => {
